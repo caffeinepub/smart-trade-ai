@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Fonts ─────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Outfit";
+  src: url("/assets/fonts/Outfit-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/assets/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+/* ─── Design tokens (OKLCH – raw L C H) ──────────────────────── */
+@layer base {
+  :root {
+    /* --- Palette: Cool dark financial terminal (light mode) --- */
+    --radius: 0.5rem;
+
+    --background:    0.97 0.005 250;
+    --foreground:    0.12 0.015 250;
+    --card:          1    0     0;
+    --card-foreground: 0.12 0.015 250;
+    --popover:       1    0     0;
+    --popover-foreground: 0.12 0.015 250;
+
+    --primary:       0.45 0.18  260;
+    --primary-foreground: 0.99 0 0;
+
+    --secondary:     0.94 0.01  250;
+    --secondary-foreground: 0.25 0.015 250;
+
+    --muted:         0.94 0.008 250;
+    --muted-foreground: 0.52 0.02 250;
+
+    --accent:        0.92 0.015 250;
+    --accent-foreground: 0.20 0.015 250;
+
+    --destructive:   0.58 0.22  25;
+    --destructive-foreground: 0.99 0 0;
+
+    --border:        0.88 0.01  250;
+    --input:         0.88 0.01  250;
+    --ring:          0.45 0.18  260;
+
+    /* Trade-specific semantic tokens */
+    --bull:       0.60 0.17 145;    /* Green for BUY / positive */
+    --bull-fg:    0.99 0    0;
+    --bear:       0.58 0.22 25;     /* Red for SELL / negative */
+    --bear-fg:    0.99 0    0;
+    --gold:       0.76 0.14 85;     /* Accent gold */
+    --signal-bg:  0.95 0.02 250;
+
+    --chart-1: 0.55 0.18 260;
+    --chart-2: 0.60 0.17 145;
+    --chart-3: 0.58 0.22 25;
+    --chart-4: 0.76 0.14 85;
+    --chart-5: 0.55 0.20 300;
+
+    --sidebar: 0.95 0.008 250;
+    --sidebar-foreground: 0.12 0.015 250;
+    --sidebar-primary: 0.45 0.18 260;
+    --sidebar-primary-foreground: 0.99 0 0;
+    --sidebar-accent: 0.92 0.01 250;
+    --sidebar-accent-foreground: 0.20 0.015 250;
+    --sidebar-border: 0.88 0.01 250;
+    --sidebar-ring: 0.45 0.18 260;
+  }
+
+  .dark {
+    /* --- Dark terminal mode --- */
+    --background:    0.10 0.010 255;
+    --foreground:    0.93 0.010 255;
+    --card:          0.14 0.012 255;
+    --card-foreground: 0.93 0.010 255;
+    --popover:       0.16 0.012 255;
+    --popover-foreground: 0.93 0.010 255;
+
+    --primary:       0.60 0.20  260;
+    --primary-foreground: 0.10 0.010 255;
+
+    --secondary:     0.18 0.012 255;
+    --secondary-foreground: 0.90 0.010 255;
+
+    --muted:         0.18 0.012 255;
+    --muted-foreground: 0.58 0.015 255;
+
+    --accent:        0.22 0.015 255;
+    --accent-foreground: 0.92 0.010 255;
+
+    --destructive:   0.62 0.22  25;
+    --destructive-foreground: 0.99 0 0;
+
+    --border:        0.22 0.012 255;
+    --input:         0.22 0.012 255;
+    --ring:          0.60 0.20  260;
+
+    --bull:       0.62 0.18 145;
+    --bull-fg:    0.10 0.010 255;
+    --bear:       0.62 0.22 25;
+    --bear-fg:    0.99 0 0;
+    --gold:       0.78 0.15 85;
+    --signal-bg:  0.16 0.015 255;
+
+    --chart-1: 0.60 0.20 260;
+    --chart-2: 0.62 0.18 145;
+    --chart-3: 0.62 0.22 25;
+    --chart-4: 0.78 0.15 85;
+    --chart-5: 0.60 0.22 300;
+
+    --sidebar: 0.13 0.010 255;
+    --sidebar-foreground: 0.93 0.010 255;
+    --sidebar-primary: 0.60 0.20 260;
+    --sidebar-primary-foreground: 0.10 0.010 255;
+    --sidebar-accent: 0.20 0.012 255;
+    --sidebar-accent-foreground: 0.92 0.010 255;
+    --sidebar-border: 0.22 0.012 255;
+    --sidebar-ring: 0.60 0.20 260;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Outfit", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Numeric/monospace values in trading data */
+  .font-mono {
+    font-family: "JetBrains Mono", "Fira Mono", monospace;
+  }
+}
+
+/* ─── Utility classes ───────────────────────────────────────── */
+@layer utilities {
+  .text-bull {
+    color: oklch(var(--bull));
+  }
+  .text-bear {
+    color: oklch(var(--bear));
+  }
+  .bg-bull {
+    background-color: oklch(var(--bull));
+    color: oklch(var(--bull-fg));
+  }
+  .bg-bear {
+    background-color: oklch(var(--bear));
+    color: oklch(var(--bear-fg));
+  }
+  .text-gold {
+    color: oklch(var(--gold));
+  }
+
+  /* Scanline background for terminal feel */
+  .bg-signal {
+    background-color: oklch(var(--signal-bg));
+  }
+
+  /* Card hover glow */
+  .card-hover {
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+  }
+  .card-hover:hover {
+    box-shadow: 0 0 0 1px oklch(var(--primary) / 0.3),
+                0 4px 20px oklch(var(--primary) / 0.12);
+    transform: translateY(-1px);
+  }
+
+  /* Bottom nav safe area */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
