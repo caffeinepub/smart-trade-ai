@@ -12,15 +12,17 @@ export interface http_request_result {
     body: Uint8Array;
     headers: Array<http_header>;
 }
+export interface CustomStrategy {
+    id: string;
+    creator: Principal;
+    name: string;
+    description: string;
+    timestamp: Time;
+    howItWorks: string;
+}
 export interface AnalysisWithImageRequest {
     mimeType: string;
     imageBase64: string;
-    notes?: string;
-    strategyName: string;
-    symbol: string;
-}
-export interface AnalysisRequest {
-    principal: Principal;
     notes?: string;
     strategyName: string;
     symbol: string;
@@ -40,6 +42,12 @@ export interface MarketPrice {
 export interface TransformationInput {
     context: Uint8Array;
     response: http_request_result;
+}
+export interface AnalysisRequest {
+    principal: Principal;
+    notes?: string;
+    strategyName: string;
+    symbol: string;
 }
 export interface CommunityStrategy {
     id: string;
@@ -84,11 +92,14 @@ export interface backendInterface {
     approveStrategy(strategyId: string): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
     clearAnalysisHistory(): Promise<void>;
+    deleteCustomStrategy(id: string): Promise<void>;
     deleteStrategy(strategyId: string): Promise<void>;
+    generateCustomStrategy(description: string): Promise<CustomStrategy>;
     getAnalysisHistory(): Promise<Array<AnalysisResult>>;
     getApprovedStrategies(): Promise<Array<CommunityStrategy>>;
     getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;
+    getCustomStrategies(): Promise<Array<CustomStrategy>>;
     getMarketPrices(): Promise<Array<MarketPrice>>;
     getPendingStrategies(): Promise<Array<CommunityStrategy>>;
     getUserProfile(user: Principal): Promise<UserProfile | null>;
@@ -98,6 +109,7 @@ export interface backendInterface {
     removeFromWatchlist(symbol: string): Promise<void>;
     requestAIAnalysis(request: AnalysisRequest): Promise<AnalysisResult>;
     requestAIAnalysisWithImage(request: AnalysisWithImageRequest): Promise<AnalysisResult>;
+    rotateGeminiKey(): Promise<void>;
     saveCallerUserProfile(profile: UserProfile): Promise<void>;
     setAccessToken(twelveData: string, gemini: string): Promise<void>;
     submitStrategy(name: string, description: string, strategyType: string): Promise<void>;

@@ -4,6 +4,7 @@ import type {
   AnalysisResult,
   AnalysisWithImageRequest,
   CommunityStrategy,
+  CustomStrategy,
   MarketPrice,
 } from "../backend.d";
 import { useActor } from "./useActor";
@@ -185,6 +186,34 @@ export function useRemoveFromWatchlist() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+    },
+  });
+}
+
+// ─── Custom Strategies ────────────────────────────────────────
+export function useCustomStrategies() {
+  const { actor, isFetching } = useActor();
+  return useQuery<CustomStrategy[]>({
+    queryKey: ["customStrategies"],
+    queryFn: async () => {
+      if (!actor) return [];
+      return actor.getCustomStrategies();
+    },
+    enabled: !!actor && !isFetching,
+  });
+}
+
+export function useGenerateCustomStrategy() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+
+  return useMutation<CustomStrategy, Error, string>({
+    mutationFn: async (description: string) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.generateCustomStrategy(description);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["customStrategies"] });
     },
   });
 }

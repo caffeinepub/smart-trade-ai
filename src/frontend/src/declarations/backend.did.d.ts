@@ -49,6 +49,14 @@ export interface CommunityStrategy {
   'timestamp' : Time,
   'strategyType' : string,
 }
+export interface CustomStrategy {
+  'id' : string,
+  'creator' : Principal,
+  'name' : string,
+  'description' : string,
+  'timestamp' : Time,
+  'howItWorks' : string,
+}
 export interface MarketPrice {
   'timestamp' : Time,
   'price' : string,
@@ -81,11 +89,14 @@ export interface _SERVICE {
   'approveStrategy' : ActorMethod<[string], undefined>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
   'clearAnalysisHistory' : ActorMethod<[], undefined>,
+  'deleteCustomStrategy' : ActorMethod<[string], undefined>,
   'deleteStrategy' : ActorMethod<[string], undefined>,
+  'generateCustomStrategy' : ActorMethod<[string], CustomStrategy>,
   'getAnalysisHistory' : ActorMethod<[], Array<AnalysisResult>>,
   'getApprovedStrategies' : ActorMethod<[], Array<CommunityStrategy>>,
   'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
+  'getCustomStrategies' : ActorMethod<[], Array<CustomStrategy>>,
   'getMarketPrices' : ActorMethod<[], Array<MarketPrice>>,
   'getPendingStrategies' : ActorMethod<[], Array<CommunityStrategy>>,
   'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
@@ -98,6 +109,7 @@ export interface _SERVICE {
     [AnalysisWithImageRequest],
     AnalysisResult
   >,
+  'rotateGeminiKey' : ActorMethod<[], undefined>,
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
   'setAccessToken' : ActorMethod<[string, string], undefined>,
   'submitStrategy' : ActorMethod<[string, string, string], undefined>,

@@ -14,6 +14,14 @@ export const UserRole = IDL.Variant({
   'guest' : IDL.Null,
 });
 export const Time = IDL.Int;
+export const CustomStrategy = IDL.Record({
+  'id' : IDL.Text,
+  'creator' : IDL.Principal,
+  'name' : IDL.Text,
+  'description' : IDL.Text,
+  'timestamp' : Time,
+  'howItWorks' : IDL.Text,
+});
 export const AnalysisResult = IDL.Record({
   'marketTrend' : IDL.Text,
   'probability' : IDL.Text,
@@ -85,7 +93,9 @@ export const idlService = IDL.Service({
   'approveStrategy' : IDL.Func([IDL.Text], [], []),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
   'clearAnalysisHistory' : IDL.Func([], [], []),
+  'deleteCustomStrategy' : IDL.Func([IDL.Text], [], []),
   'deleteStrategy' : IDL.Func([IDL.Text], [], []),
+  'generateCustomStrategy' : IDL.Func([IDL.Text], [CustomStrategy], []),
   'getAnalysisHistory' : IDL.Func([], [IDL.Vec(AnalysisResult)], ['query']),
   'getApprovedStrategies' : IDL.Func(
       [],
@@ -94,7 +104,8 @@ export const idlService = IDL.Service({
     ),
   'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
   'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
-  'getMarketPrices' : IDL.Func([], [IDL.Vec(MarketPrice)], ['query']),
+  'getCustomStrategies' : IDL.Func([], [IDL.Vec(CustomStrategy)], ['query']),
+  'getMarketPrices' : IDL.Func([], [IDL.Vec(MarketPrice)], []),
   'getPendingStrategies' : IDL.Func(
       [],
       [IDL.Vec(CommunityStrategy)],
@@ -115,6 +126,7 @@ export const idlService = IDL.Service({
       [AnalysisResult],
       [],
     ),
+  'rotateGeminiKey' : IDL.Func([], [], []),
   'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
   'setAccessToken' : IDL.Func([IDL.Text, IDL.Text], [], []),
   'submitStrategy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [], []),
@@ -135,6 +147,14 @@ export const idlFactory = ({ IDL }) => {
     'guest' : IDL.Null,
   });
   const Time = IDL.Int;
+  const CustomStrategy = IDL.Record({
+    'id' : IDL.Text,
+    'creator' : IDL.Principal,
+    'name' : IDL.Text,
+    'description' : IDL.Text,
+    'timestamp' : Time,
+    'howItWorks' : IDL.Text,
+  });
   const AnalysisResult = IDL.Record({
     'marketTrend' : IDL.Text,
     'probability' : IDL.Text,
@@ -203,7 +223,9 @@ export const idlFactory = ({ IDL }) => {
     'approveStrategy' : IDL.Func([IDL.Text], [], []),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
     'clearAnalysisHistory' : IDL.Func([], [], []),
+    'deleteCustomStrategy' : IDL.Func([IDL.Text], [], []),
     'deleteStrategy' : IDL.Func([IDL.Text], [], []),
+    'generateCustomStrategy' : IDL.Func([IDL.Text], [CustomStrategy], []),
     'getAnalysisHistory' : IDL.Func([], [IDL.Vec(AnalysisResult)], ['query']),
     'getApprovedStrategies' : IDL.Func(
         [],
@@ -212,7 +234,8 @@ export const idlFactory = ({ IDL }) => {
       ),
     'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
-    'getMarketPrices' : IDL.Func([], [IDL.Vec(MarketPrice)], ['query']),
+    'getCustomStrategies' : IDL.Func([], [IDL.Vec(CustomStrategy)], ['query']),
+    'getMarketPrices' : IDL.Func([], [IDL.Vec(MarketPrice)], []),
     'getPendingStrategies' : IDL.Func(
         [],
         [IDL.Vec(CommunityStrategy)],
@@ -233,6 +256,7 @@ export const idlFactory = ({ IDL }) => {
         [AnalysisResult],
         [],
       ),
+    'rotateGeminiKey' : IDL.Func([], [], []),
     'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
     'setAccessToken' : IDL.Func([IDL.Text, IDL.Text], [], []),
     'submitStrategy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [], []),
