@@ -9,6 +9,7 @@ import {
   User,
   Users,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { AIAnalysis } from "./components/AIAnalysis";
 import { Charts } from "./components/Charts";
@@ -18,6 +19,9 @@ import { Profile } from "./components/Profile";
 
 // ─── Tab types ────────────────────────────────────────────────
 type Tab = "dashboard" | "charts" | "ai" | "community" | "profile";
+
+// Shared state for quick analyze: symbol passed from Dashboard to AI tab
+export type QuickAnalyzeState = { symbol: string; ts: number } | null;
 
 interface NavItem {
   id: Tab;
@@ -68,6 +72,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [theme, setTheme] = useState<"dark" | "light">(getInitialTheme);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
+  const [quickAnalyze, setQuickAnalyze] = useState<QuickAnalyzeState>(null);
 
   // Apply theme on mount and changes
   useEffect(() => {
@@ -81,6 +86,11 @@ export default function App() {
   const handleChartOpen = (symbol: string) => {
     setChartSymbol(symbol);
     setActiveTab("charts");
+  };
+
+  const handleQuickAnalyze = (symbol: string) => {
+    setQuickAnalyze({ symbol, ts: Date.now() });
+    setActiveTab("ai");
   };
 
   const isDark = theme === "dark";
@@ -129,12 +139,20 @@ export default function App() {
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-4 py-4 pb-24">
           {activeTab === "dashboard" && (
-            <Dashboard onChartOpen={handleChartOpen} />
+            <Dashboard
+              onChartOpen={handleChartOpen}
+              onQuickAnalyze={handleQuickAnalyze}
+            />
           )}
           {activeTab === "charts" && (
             <Charts initialSymbol={chartSymbol} isDark={isDark} />
           )}
-          {activeTab === "ai" && <AIAnalysis />}
+          {activeTab === "ai" && (
+            <AIAnalysis
+              quickAnalyze={quickAnalyze}
+              onQuickAnalyzeHandled={() => setQuickAnalyze(null)}
+            />
+          )}
           {activeTab === "community" && <Community />}
           {activeTab === "profile" && <Profile />}
         </div>
@@ -149,8 +167,9 @@ export default function App() {
               <button
                 type="button"
                 key={id}
+                data-ocid={`nav.${id}_tab`}
                 onClick={() => setActiveTab(id)}
-                className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors min-h-[44px] ${
+                className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-all min-h-[44px] select-none relative ${
                   isActive
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -158,19 +177,32 @@ export default function App() {
                 aria-label={label}
                 aria-current={isActive ? "page" : undefined}
               >
-                <Icon
-                  className={`h-5 w-5 transition-transform ${isActive ? "scale-110" : ""}`}
-                />
+                {/* Active pill indicator */}
+                {isActive && (
+                  <motion.span
+                    layoutId="nav-indicator"
+                    className="absolute top-0 left-1/2 -translate-x-1/2 h-0.5 w-10 bg-primary rounded-full"
+                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  />
+                )}
+                <div
+                  className={`flex items-center justify-center rounded-xl transition-all ${
+                    isActive ? "bg-primary/10 px-3 py-1" : "px-2 py-1"
+                  }`}
+                >
+                  <Icon
+                    className={`h-5 w-5 transition-transform ${isActive ? "scale-110" : ""}`}
+                  />
+                </div>
                 <span
-                  className={`text-[10px] font-medium transition-colors ${
-                    isActive ? "text-primary" : "text-muted-foreground"
+                  className={`text-[10px] font-medium transition-colors leading-none ${
+                    isActive
+                      ? "text-primary font-semibold"
+                      : "text-muted-foreground"
                   }`}
                 >
                   {label}
                 </span>
-                {isActive && (
-                  <span className="absolute bottom-1 h-0.5 w-8 bg-primary rounded-full" />
-                )}
               </button>
             );
           })}

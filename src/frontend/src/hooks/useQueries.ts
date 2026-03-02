@@ -6,8 +6,105 @@ import type {
   CommunityStrategy,
   CustomStrategy,
   MarketPrice,
+  PriceAlert,
+  TradeEntry,
 } from "../backend.d";
 import { useActor } from "./useActor";
+
+// ─── CoinGecko Free Market Prices ─────────────────────────────
+
+interface CoinGeckoSimplePrice {
+  usd: number;
+  usd_24h_change: number;
+}
+
+interface CoinGeckoResponse {
+  bitcoin?: CoinGeckoSimplePrice;
+  ethereum?: CoinGeckoSimplePrice;
+}
+
+// Static fallback prices for assets not available in CoinGecko free tier
+const STATIC_FALLBACK_PRICES: Omit<MarketPrice, "timestamp">[] = [
+  { symbol: "XAU/USD", price: "2,384.60", changePercent: "+0.42" },
+  { symbol: "XAG/USD", price: "28.94", changePercent: "-0.18" },
+  { symbol: "EUR/USD", price: "1.0851", changePercent: "-0.09" },
+  { symbol: "GBP/USD", price: "1.2734", changePercent: "+0.15" },
+  { symbol: "USD/JPY", price: "149.82", changePercent: "+0.23" },
+  { symbol: "NASDAQ", price: "17,891.50", changePercent: "+0.76" },
+  { symbol: "S&P500", price: "5,218.40", changePercent: "+0.53" },
+  { symbol: "OIL", price: "78.43", changePercent: "-0.67" },
+];
+
+export function useFreeMarketPrices() {
+  return useQuery<MarketPrice[]>({
+    queryKey: ["freeMarketPrices"],
+    queryFn: async () => {
+      const now = BigInt(Date.now());
+      try {
+        const resp = await fetch(
+          "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true",
+          { signal: AbortSignal.timeout(8000) },
+        );
+        if (!resp.ok) throw new Error(`CoinGecko error: ${resp.status}`);
+        const data = (await resp.json()) as CoinGeckoResponse;
+
+        const cryptoPrices: MarketPrice[] = [];
+
+        if (data.bitcoin) {
+          const pct = data.bitcoin.usd_24h_change;
+          cryptoPrices.push({
+            symbol: "BTC/USD",
+            price: data.bitcoin.usd.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }),
+            changePercent: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}`,
+            timestamp: now,
+          });
+        }
+
+        if (data.ethereum) {
+          const pct = data.ethereum.usd_24h_change;
+          cryptoPrices.push({
+            symbol: "ETH/USD",
+            price: data.ethereum.usd.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }),
+            changePercent: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}`,
+            timestamp: now,
+          });
+        }
+
+        const staticPrices: MarketPrice[] = STATIC_FALLBACK_PRICES.map((p) => ({
+          ...p,
+          timestamp: now,
+        }));
+
+        return [...cryptoPrices, ...staticPrices];
+      } catch {
+        // Full fallback to static prices
+        return [
+          {
+            symbol: "BTC/USD",
+            price: "67,842.50",
+            changePercent: "+2.34",
+            timestamp: now,
+          },
+          {
+            symbol: "ETH/USD",
+            price: "3,521.18",
+            changePercent: "+1.87",
+            timestamp: now,
+          },
+          ...STATIC_FALLBACK_PRICES.map((p) => ({ ...p, timestamp: now })),
+        ];
+      }
+    },
+    refetchInterval: 30000,
+    staleTime: 25000,
+  });
+}
 
 // ─── Market Prices ────────────────────────────────────────────
 export function useMarketPrices() {
@@ -276,6 +373,155 @@ export function useDeleteStrategy() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["approvedStrategies"] });
       void queryClient.invalidateQueries({ queryKey: ["pendingStrategies"] });
+    },
+  });
+}
+
+// ─── Trade Journal ────────────────────────────────────────────
+export function useTradeEntries() {
+  const { actor, isFetching } = useActor();
+  return useQuery<TradeEntry[]>({
+    queryKey: ["tradeEntries"],
+    queryFn: async () => {
+      if (!actor) return [];
+      return actor.getTradeEntries();
+    },
+    enabled: !!actor && !isFetching,
+  });
+}
+
+export function useAddTradeEntry() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation<
+    TradeEntry,
+    Error,
+    {
+      symbol: string;
+      entryPrice: string;
+      exitPrice: string;
+      direction: string;
+      outcome: string;
+      pnl: string;
+      notes: string;
+      strategy: string;
+    }
+  >({
+    mutationFn: async (params) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.addTradeEntry(
+        params.symbol,
+        params.entryPrice,
+        params.exitPrice,
+        params.direction,
+        params.outcome,
+        params.pnl,
+        params.notes,
+        params.strategy,
+      );
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tradeEntries"] });
+    },
+  });
+}
+
+export function useDeleteTradeEntry() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (id: string) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.deleteTradeEntry(id);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tradeEntries"] });
+    },
+  });
+}
+
+// ─── Price Alerts ─────────────────────────────────────────────
+export function usePriceAlerts() {
+  const { actor, isFetching } = useActor();
+  return useQuery<PriceAlert[]>({
+    queryKey: ["priceAlerts"],
+    queryFn: async () => {
+      if (!actor) return [];
+      return actor.getPriceAlerts();
+    },
+    enabled: !!actor && !isFetching,
+  });
+}
+
+export function useSetPriceAlert() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation<
+    PriceAlert,
+    Error,
+    { symbol: string; targetPrice: string; condition: string }
+  >({
+    mutationFn: async ({ symbol, targetPrice, condition }) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.setPriceAlert(symbol, targetPrice, condition);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["priceAlerts"] });
+    },
+  });
+}
+
+export function useRemovePriceAlert() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (id: string) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.removePriceAlert(id);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["priceAlerts"] });
+    },
+  });
+}
+
+export function useCheckAlerts(prices: MarketPrice[]) {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation<PriceAlert[], Error, void>({
+    mutationFn: async () => {
+      if (!actor || prices.length === 0) return [];
+      return actor.checkAndTriggerAlerts(prices);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["priceAlerts"] });
+    },
+  });
+}
+
+// ─── Favorite Strategies ──────────────────────────────────────
+export function useFavoriteStrategies() {
+  const { actor, isFetching } = useActor();
+  return useQuery<string[]>({
+    queryKey: ["favoriteStrategies"],
+    queryFn: async () => {
+      if (!actor) return [];
+      return actor.getFavoriteStrategies();
+    },
+    enabled: !!actor && !isFetching,
+  });
+}
+
+export function useToggleFavoriteStrategy() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (strategyId: string) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.toggleFavoriteStrategy(strategyId);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["favoriteStrategies"] });
     },
   });
 }

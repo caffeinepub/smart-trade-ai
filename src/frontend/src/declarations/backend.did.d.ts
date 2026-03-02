@@ -63,7 +63,33 @@ export interface MarketPrice {
   'changePercent' : string,
   'symbol' : string,
 }
+export interface PriceAlert {
+  'id' : string,
+  'userId' : Principal,
+  'targetPrice' : string,
+  'timestamp' : Time,
+  'triggered' : boolean,
+  'symbol' : string,
+  'condition' : string,
+}
+export interface SystemStatus {
+  'geminiKeyCount' : bigint,
+  'geminiModel' : string,
+  'twelveDataKeyCount' : bigint,
+}
 export type Time = bigint;
+export interface TradeEntry {
+  'id' : string,
+  'pnl' : string,
+  'direction' : string,
+  'strategy' : string,
+  'notes' : string,
+  'timestamp' : Time,
+  'entryPrice' : string,
+  'exitPrice' : string,
+  'outcome' : string,
+  'symbol' : string,
+}
 export interface TransformationInput {
   'context' : Uint8Array,
   'response' : http_request_result,
@@ -85,25 +111,40 @@ export interface http_request_result {
 }
 export interface _SERVICE {
   '_initializeAccessControlWithSecret' : ActorMethod<[string], undefined>,
+  'addGeminiKey' : ActorMethod<[string], undefined>,
   'addToWatchlist' : ActorMethod<[string], undefined>,
+  'addTradeEntry' : ActorMethod<
+    [string, string, string, string, string, string, string, string],
+    TradeEntry
+  >,
   'approveStrategy' : ActorMethod<[string], undefined>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
+  'checkAndTriggerAlerts' : ActorMethod<
+    [Array<MarketPrice>],
+    Array<PriceAlert>
+  >,
   'clearAnalysisHistory' : ActorMethod<[], undefined>,
   'deleteCustomStrategy' : ActorMethod<[string], undefined>,
   'deleteStrategy' : ActorMethod<[string], undefined>,
+  'deleteTradeEntry' : ActorMethod<[string], undefined>,
   'generateCustomStrategy' : ActorMethod<[string], CustomStrategy>,
   'getAnalysisHistory' : ActorMethod<[], Array<AnalysisResult>>,
   'getApprovedStrategies' : ActorMethod<[], Array<CommunityStrategy>>,
   'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getCustomStrategies' : ActorMethod<[], Array<CustomStrategy>>,
+  'getFavoriteStrategies' : ActorMethod<[], Array<string>>,
   'getMarketPrices' : ActorMethod<[], Array<MarketPrice>>,
   'getPendingStrategies' : ActorMethod<[], Array<CommunityStrategy>>,
+  'getPriceAlerts' : ActorMethod<[], Array<PriceAlert>>,
+  'getSystemStatus' : ActorMethod<[], SystemStatus>,
+  'getTradeEntries' : ActorMethod<[], Array<TradeEntry>>,
   'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
   'getWatchlist' : ActorMethod<[], Array<string>>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
   'rejectStrategy' : ActorMethod<[string], undefined>,
   'removeFromWatchlist' : ActorMethod<[string], undefined>,
+  'removePriceAlert' : ActorMethod<[string], undefined>,
   'requestAIAnalysis' : ActorMethod<[AnalysisRequest], AnalysisResult>,
   'requestAIAnalysisWithImage' : ActorMethod<
     [AnalysisWithImageRequest],
@@ -112,7 +153,9 @@ export interface _SERVICE {
   'rotateGeminiKey' : ActorMethod<[], undefined>,
   'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
   'setAccessToken' : ActorMethod<[string, string], undefined>,
+  'setPriceAlert' : ActorMethod<[string, string, string], PriceAlert>,
   'submitStrategy' : ActorMethod<[string, string, string], undefined>,
+  'toggleFavoriteStrategy' : ActorMethod<[string], undefined>,
   'transform' : ActorMethod<[TransformationInput], TransformationOutput>,
   'voteOnStrategy' : ActorMethod<[string, boolean], undefined>,
 }

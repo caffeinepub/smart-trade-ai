@@ -1,4 +1,5 @@
 import Array "mo:core/Array";
+import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
@@ -10,9 +11,11 @@ import OutCall "http-outcalls/outcall";
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
 import Runtime "mo:core/Runtime";
-import Error "mo:core/Error";
+
+
 
 actor {
+  // Types
   public type UserProfile = {
     name : Text;
   };
@@ -76,6 +79,35 @@ actor {
     timestamp : Time.Time;
   };
 
+  public type TradeEntry = {
+    id : Text;
+    symbol : Text;
+    entryPrice : Text;
+    exitPrice : Text;
+    direction : Text;
+    outcome : Text;
+    pnl : Text;
+    notes : Text;
+    strategy : Text;
+    timestamp : Time.Time;
+  };
+
+  public type PriceAlert = {
+    id : Text;
+    userId : Principal;
+    symbol : Text;
+    targetPrice : Text;
+    condition : Text; // "above" or "below"
+    triggered : Bool;
+    timestamp : Time.Time;
+  };
+
+  public type SystemStatus = {
+    geminiModel : Text;
+    geminiKeyCount : Nat;
+    twelveDataKeyCount : Nat;
+  };
+
   let twelveDataKeys : [Text] = [
     "904fe4116b2148eca45fce535af482c6",
     "f988d1da71fa4ad0938cd905101981ac",
@@ -85,30 +117,13 @@ actor {
     "7700a221ff464c44b8ff5da12cf36406",
   ];
 
-  var twelveDataKeyIndex : Nat = 0;
-
-  let geminiKeys : [Text] = [
+  var geminiKeys : [Text] = [
     "AIzaSyC_ksw8XtoO35iSE_DVFRNeONwydB4e_ZQ",
     "AIzaSyD9d2m7ggQ8d7ndWpsQVk5JfG_xHz4A1S0",
     "AIzaSyC5dcwBiBRfubZlTOuTeFUyl8CaemGLTI4",
     "AIzaSyD68nxpkflES-8AO4YluVRiaqO7veQZVD8",
     "AIzaSyC0aYLOs6WT_Ikxw2q3VNemA5pVSvyFnJ4",
   ];
-  var geminiKeyIndex : Nat = 0;
-  var twelveDataApiKey : Text = "";
-  var geminiApiKey : Text = "";
-
-  let accessControlState = AccessControl.initState();
-  include MixinAuthorization(accessControlState);
-
-  let userProfiles = Map.empty<Principal, UserProfile>();
-  var lastMarketPriceFetchTime : Int = 0;
-  var cachedMarketPrices : [MarketPrice] = [];
-  let userAnalysisHistory = Map.empty<Principal, List.List<AnalysisResult>>();
-  let communityStrategies = Map.empty<Text, CommunityStrategy>();
-  let strategyVotes = Map.empty<Text, Map.Map<Principal, Bool>>();
-  let customStrategies = Map.empty<Text, CustomStrategy>();
-  let userWatchlists = Map.empty<Principal, List.List<Text>>();
 
   module CommunityStrategy {
     public func compareByVotes(a : CommunityStrategy, b : CommunityStrategy) : Order.Order {
@@ -118,59 +133,28 @@ actor {
     };
   };
 
-  func getTwelveDataKey() : Text {
-    if (twelveDataApiKey != "") { return twelveDataApiKey };
-    twelveDataKeys[twelveDataKeyIndex % twelveDataKeys.size()];
-  };
+  // Access Control State
+  let accessControlState = AccessControl.initState();
+  include MixinAuthorization(accessControlState);
 
-  func rotateTwelveDataKey() {
-    twelveDataKeyIndex := (twelveDataKeyIndex + 1) % twelveDataKeys.size();
-  };
+  // Persistent State
+  let userProfiles = Map.empty<Principal, UserProfile>();
+  let userAnalysisHistory = Map.empty<Principal, List.List<AnalysisResult>>();
+  let communityStrategies = Map.empty<Text, CommunityStrategy>();
+  let strategyVotes = Map.empty<Text, Map.Map<Principal, Bool>>();
+  let customStrategies = Map.empty<Text, CustomStrategy>();
+  let userWatchlists = Map.empty<Principal, List.List<Text>>();
+  let userTradeJournals = Map.empty<Principal, List.List<TradeEntry>>();
+  let priceAlerts = Map.empty<Principal, List.List<PriceAlert>>();
+  let favoriteStrategies = Map.empty<Principal, List.List<Text>>();
+  var twelveDataKeyIndex : Nat = 0;
+  var geminiKeyIndex : Nat = 0;
+  var twelveDataApiKey : Text = "";
+  var geminiApiKey : Text = "";
+  var lastMarketPriceFetchTime : Int = 0;
+  var cachedMarketPrices : [MarketPrice] = [];
 
-  func getGeminiKey() : Text {
-    if (geminiApiKey != "") { return geminiApiKey };
-    geminiKeys[geminiKeyIndex % geminiKeys.size()];
-  };
-
-  public shared ({ caller }) func rotateGeminiKey() : async () {
-    if (not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Unauthorized: Only admins can rotate Gemini keys");
-    };
-    geminiKeyIndex := (geminiKeyIndex + 1) % geminiKeys.size();
-  };
-
-  public shared ({ caller }) func setAccessToken(twelveData : Text, gemini : Text) : async () {
-    if (not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Unauthorized: Only admins can set access token");
-    };
-    twelveDataApiKey := twelveData;
-    geminiApiKey := gemini;
-  };
-
-  public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only users can access profiles");
-    };
-    userProfiles.get(caller);
-  };
-
-  public query ({ caller }) func getUserProfile(user : Principal) : async ?UserProfile {
-    if (caller != user and not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Unauthorized: Can only view your own profile");
-    };
-    userProfiles.get(user);
-  };
-
-  public shared ({ caller }) func saveCallerUserProfile(profile : UserProfile) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only users can save profiles");
-    };
-    userProfiles.add(caller, profile);
-  };
-
-  public query func transform(input : OutCall.TransformationInput) : async OutCall.TransformationOutput {
-    OutCall.transform(input);
-  };
+  // Utility Functions
 
   func extractJsonField(json : Text, field : Text) : ?Text {
     let needle1 = "\"" # field # "\":\"";
@@ -288,8 +272,11 @@ actor {
     "{\"contents\":[{\"parts\":[{\"inline_data\":{\"mime_type\":\"" # mimeType # "\",\"data\":\"" # imageBase64 # "\"}},{\"text\":\"Analyze this chart for " # symbol # " using " # strategyName # " strategy." # notesStr # "\\nIMPORTANT: Return ONLY a raw JSON object. No markdown, no code fences, no extra text before or after. Start your response with { and end with }.\\nRequired JSON format:\\n{\\\"signal\\\":\\\"BUY or SELL\\\",\\\"entryPrice\\\":\\\"numeric value\\\",\\\"stopLoss\\\":\\\"numeric value\\\",\\\"takeProfit\\\":\\\"numeric value\\\",\\\"riskLevel\\\":\\\"Low or Medium or High\\\",\\\"confidence\\\":\\\"e.g. 72%\\\",\\\"probability\\\":\\\"e.g. 68%\\\",\\\"entryConfidence\\\":\\\"e.g. 75%\\\",\\\"stopLossSafety\\\":\\\"Good or Fair or Poor\\\",\\\"takeProfitProbability\\\":\\\"e.g. 65%\\\",\\\"marketTrend\\\":\\\"Bullish or Bearish or Neutral\\\",\\\"strategyUsed\\\":\\\"strategy name\\\",\\\"explanation\\\":\\\"2-3 sentence analysis\\\"}\"}]}]}";
   };
 
-  // Helper to check if Gemini result status or response indicates error/no remaining quota
   func isGeminiError(rawResponse : Text) : Bool {
+    if (rawResponse.contains(#text "leaked")) { return true };
+    if (rawResponse.contains(#text "PERMISSION_DENIED")) { return true };
+    if (rawResponse.contains(#text "API_KEY_INVALID")) { return true };
+    if (rawResponse.contains(#text "403")) { return true };
     rawResponse.contains(#text "error") or
     rawResponse.contains(#text "429") or
     rawResponse.contains(#text "quota") or
@@ -300,7 +287,6 @@ actor {
      rawResponse.contains(#text "INTERNAL")));
   };
 
-  // Helper function to limit text length with truncation indication
   func truncate(s : Text, maxLen : Nat) : Text {
     if (s.size() <= maxLen) { return s };
     var result = "";
@@ -313,23 +299,16 @@ actor {
     result # "...(truncated)";
   };
 
-  /// Improved Gemini call result handling:
-  /// * Attempts all keys.
-  /// * Fresh signal/error for each key.
-  /// * In case of errors:
-  ///     * signal is "Error".
-  ///     * entry/stop/take profit are "N/A".
-  ///     * All keys tried are reported.
-  ///     * Details of last (truncated) error.
-  /// * Success (non-empty signal) instantly returns result.
   func callGemini(reqBody : Text) : async AnalysisResult {
     var lastRawError : Text = "Gemini error";
     var lastKeyNum : Nat = 1;
     var attempts : Nat = 0;
+    var reportedLeakedCount = 0;
+
     while (attempts < geminiKeys.size()) {
       let key = geminiKeys[attempts];
       let keyNum = attempts + 1;
-      let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=" # key;
+      let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" # key;
       let headers : [OutCall.Header] = [{ name = "Content-Type"; value = "application/json" }];
 
       try {
@@ -339,6 +318,12 @@ actor {
         let signalVal = fieldOr(json, "signal", "");
 
         if (isGeminiError(resp)) {
+          if (
+            (resp.contains(#text "leaked") or resp.contains(#text "PERMISSION_DENIED")) and
+            not (resp.contains(#text "Invalid API key") or resp.contains(#text "API_KEY_INVALID"))
+          ) {
+            reportedLeakedCount += 1;
+          };
           lastRawError := "Key " # keyNum.toText() # " failed: " # truncate(resp, 1200);
           lastKeyNum := keyNum;
         } else if (signalVal != "") {
@@ -375,13 +360,21 @@ actor {
       attempts += 1;
     };
 
+    let allReportedLeaked = (reportedLeakedCount == geminiKeys.size());
+
+    let explanationMsg = if (allReportedLeaked) {
+      "GEMINI_KEY_REVOKED: All API keys have been reported as leaked/revoked by Google. Please generate fresh API keys at https://aistudio.google.com/apikey and update them using the setAccessToken function."
+    } else {
+      "All " # geminiKeys.size().toText() # " keys tried. Last error (" # lastKeyNum.toText() # "): " # lastRawError;
+    };
+
     {
       signal = "Error";
       entryPrice = "N/A";
       stopLoss = "N/A";
       takeProfit = "N/A";
       riskLevel = "N/A";
-      explanation = "All " # geminiKeys.size().toText() # " keys tried. Last error — " # lastRawError;
+      explanation = explanationMsg;
       timestamp = Time.now();
       confidence = "0%";
       probability = "0%";
@@ -392,6 +385,89 @@ actor {
       strategyUsed = "Unknown";
     };
   };
+
+  func getTwelveDataKey() : Text {
+    if (twelveDataApiKey != "") { return twelveDataApiKey };
+    twelveDataKeys[twelveDataKeyIndex % twelveDataKeys.size()];
+  };
+
+  func rotateTwelveDataKey() {
+    twelveDataKeyIndex := (twelveDataKeyIndex + 1) % twelveDataKeys.size();
+  };
+
+  func getGeminiKey() : Text {
+    if (geminiApiKey != "") { return geminiApiKey };
+    geminiKeys[geminiKeyIndex % geminiKeys.size()];
+  };
+
+  // System Calls & Auth
+
+  public query func transform(input : OutCall.TransformationInput) : async OutCall.TransformationOutput {
+    OutCall.transform(input);
+  };
+
+  public shared ({ caller }) func setAccessToken(twelveData : Text, gemini : Text) : async () {
+    if (not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: Only admins can set access token");
+    };
+    twelveDataApiKey := twelveData;
+    geminiApiKey := gemini;
+  };
+
+  public shared ({ caller }) func rotateGeminiKey() : async () {
+    if (not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: Only admins can rotate Gemini keys");
+    };
+    geminiKeyIndex := (geminiKeyIndex + 1) % geminiKeys.size();
+  };
+
+  public shared ({ caller }) func addGeminiKey(key : Text) : async () {
+    if (not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: Only admins can add Gemini keys");
+    };
+
+    if (key.startsWith(#text "AIza")) {
+      geminiKeys := geminiKeys.concat([key]);
+    } else {
+      Runtime.trap("Invalid Gemini API key format: must start with AIza");
+    };
+  };
+
+  public query ({ caller }) func getSystemStatus() : async SystemStatus {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can access system status");
+    };
+    {
+      geminiModel = "gemini-2.5-flash";
+      geminiKeyCount = geminiKeys.size();
+      twelveDataKeyCount = twelveDataKeys.size();
+    };
+  };
+
+  // User Profile
+
+  public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can access profiles");
+    };
+    userProfiles.get(caller);
+  };
+
+  public query ({ caller }) func getUserProfile(user : Principal) : async ?UserProfile {
+    if (caller != user and not AccessControl.isAdmin(accessControlState, caller)) {
+      Runtime.trap("Unauthorized: Can only view your own profile");
+    };
+    userProfiles.get(user);
+  };
+
+  public shared ({ caller }) func saveCallerUserProfile(profile : UserProfile) : async () {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can save profiles");
+    };
+    userProfiles.add(caller, profile);
+  };
+
+  // Market Data
 
   public shared ({ caller }) func getMarketPrices() : async [MarketPrice] {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
@@ -469,6 +545,8 @@ actor {
     };
     results;
   };
+
+  // Analysis
 
   public shared ({ caller }) func requestAIAnalysis(request : AnalysisRequest) : async AnalysisResult {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
@@ -556,6 +634,8 @@ actor {
     };
     userAnalysisHistory.add(caller, List.empty<AnalysisResult>());
   };
+
+  // Strategies
 
   public shared ({ caller }) func submitStrategy(name : Text, description : Text, strategyType : Text) : async () {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
@@ -667,7 +747,7 @@ actor {
     };
     let body = buildGeminiCustomStrategyBody(description);
     let rawText = await OutCall.httpPostRequest(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent?key=" # getGeminiKey(),
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" # getGeminiKey(),
       [{ name = "Content-Type"; value = "application/json" }],
       body,
       transform,
@@ -713,6 +793,8 @@ actor {
     };
   };
 
+  // Watchlist
+
   public shared ({ caller }) func addToWatchlist(symbol : Text) : async () {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
       Runtime.trap("Unauthorized: Only users can manage watchlists");
@@ -745,6 +827,217 @@ actor {
     switch (userWatchlists.get(caller)) {
       case (null) { [] };
       case (?wl) { wl.toArray() };
+    };
+  };
+
+  // Trade Journal Feature
+
+  public shared ({ caller }) func addTradeEntry(
+    symbol : Text,
+    entryPrice : Text,
+    exitPrice : Text,
+    direction : Text,
+    outcome : Text,
+    pnl : Text,
+    notes : Text,
+    strategy : Text,
+  ) : async TradeEntry {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can manage trade journals");
+    };
+
+    let tradeEntry : TradeEntry = {
+      id = caller.toText() # Time.now().toText();
+      symbol;
+      entryPrice;
+      exitPrice;
+      direction;
+      outcome;
+      pnl;
+      notes;
+      strategy;
+      timestamp = Time.now();
+    };
+
+    let currentJournal = switch (userTradeJournals.get(caller)) {
+      case (null) { List.empty<TradeEntry>() };
+      case (?j) { j };
+    };
+
+    currentJournal.add(tradeEntry);
+    if (currentJournal.size() > 100) { ignore currentJournal.removeLast() };
+    userTradeJournals.add(caller, currentJournal);
+
+    tradeEntry;
+  };
+
+  public query ({ caller }) func getTradeEntries() : async [TradeEntry] {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can access trade journals");
+    };
+    switch (userTradeJournals.get(caller)) {
+      case (null) { [] };
+      case (?j) { j.toArray() };
+    };
+  };
+
+  public shared ({ caller }) func deleteTradeEntry(id : Text) : async () {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can delete trade entries");
+    };
+
+    var entryOwner : ?Principal = null;
+    var entryFound = false;
+
+    for ((user, journal) in userTradeJournals.entries()) {
+      let hasEntry = journal.toArray().find(func(entry) { entry.id == id });
+      switch (hasEntry) {
+        case (?_) {
+          entryOwner := ?user;
+          entryFound := true;
+        };
+        case (null) {};
+      };
+    };
+
+    if (not entryFound) {
+      Runtime.trap("Trade entry not found");
+    };
+
+    switch (entryOwner) {
+      case (?owner) {
+        if (owner != caller and not AccessControl.isAdmin(accessControlState, caller)) {
+          Runtime.trap("Unauthorized: Only entry creator or admin can delete");
+        };
+        let ownerJournal = switch (userTradeJournals.get(owner)) {
+          case (null) { List.empty<TradeEntry>() };
+          case (?j) { j };
+        };
+        let filteredJournal = ownerJournal.filter(func(entry) { entry.id != id });
+        userTradeJournals.add(owner, filteredJournal);
+      };
+      case (null) {
+        Runtime.trap("Trade entry owner not found");
+      };
+    };
+  };
+
+  // Price Alerts
+
+  public shared ({ caller }) func setPriceAlert(symbol : Text, targetPrice : Text, condition : Text) : async PriceAlert {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can manage price alerts");
+    };
+    let alert : PriceAlert = {
+      id = caller.toText() # Time.now().toText();
+      userId = caller;
+      symbol;
+      targetPrice;
+      condition;
+      triggered = false;
+      timestamp = Time.now();
+    };
+
+    let userAlerts = switch (priceAlerts.get(caller)) {
+      case (null) { List.empty<PriceAlert>() };
+      case (?alerts) { alerts };
+    };
+    userAlerts.add(alert);
+    priceAlerts.add(caller, userAlerts);
+
+    alert;
+  };
+
+  public query ({ caller }) func getPriceAlerts() : async [PriceAlert] {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can access price alerts");
+    };
+    switch (priceAlerts.get(caller)) {
+      case (null) { [] };
+      case (?alerts) { alerts.toArray() };
+    };
+  };
+
+  public shared ({ caller }) func removePriceAlert(id : Text) : async () {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can remove price alerts");
+    };
+
+    switch (priceAlerts.get(caller)) {
+      case (null) {
+        Runtime.trap("No price alerts found");
+      };
+      case (?alerts) {
+        let filteredAlerts = alerts.filter(func(alert) { alert.id != id });
+        priceAlerts.add(caller, filteredAlerts);
+      };
+    };
+  };
+
+  public shared ({ caller }) func checkAndTriggerAlerts(currentPrices : [MarketPrice]) : async [PriceAlert] {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can check price alerts");
+    };
+
+    var triggeredAlerts : [PriceAlert] = [];
+
+    for ((user, alerts) in priceAlerts.entries()) {
+      var needsUpdate = false;
+      let updatedAlerts = alerts.map<PriceAlert, PriceAlert>(func(alert) {
+        if (not alert.triggered) {
+          switch (currentPrices.find(func(price) { price.symbol == alert.symbol })) {
+            case (?_price) {
+              // Remove float conversion and comparison
+              let newAlert = { alert with triggered = true };
+              triggeredAlerts := triggeredAlerts.concat([newAlert]);
+              needsUpdate := true;
+              return newAlert;
+            };
+            case (null) {};
+          };
+        };
+        alert;
+      });
+      if (needsUpdate) {
+        priceAlerts.add(user, updatedAlerts);
+      };
+    };
+    triggeredAlerts;
+  };
+
+  // Favorite Strategies
+
+  public shared ({ caller }) func toggleFavoriteStrategy(strategyId : Text) : async () {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can manage favorite strategies");
+    };
+
+    let favorites = switch (favoriteStrategies.get(caller)) {
+      case (null) { List.empty<Text>() };
+      case (?favs) { favs };
+    };
+
+    let existing = favorites.toArray();
+    let alreadyFavorited = existing.find(func(id) { id == strategyId });
+
+    switch (alreadyFavorited) {
+      case (null) {
+        favorites.add(strategyId);
+      };
+      case (?_) {
+        favoriteStrategies.add(caller, favorites.filter(func(id) { id != strategyId }));
+      };
+    };
+    favoriteStrategies.add(caller, favorites);
+  };
+
+  public query ({ caller }) func getFavoriteStrategies() : async [Text] {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can access favorite strategies");
+    };
+    switch (favoriteStrategies.get(caller)) {
+      case (null) { [] };
+      case (?favorites) { favorites.toArray() };
     };
   };
 };

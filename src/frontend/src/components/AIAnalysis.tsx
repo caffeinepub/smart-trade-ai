@@ -1,21 +1,34 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Activity,
   AlertCircle,
   ArrowDown,
   ArrowUp,
-  ArrowUpDown,
+  BookOpen,
   Brain,
+  Calculator,
   ChevronDown,
   ChevronUp,
+  Globe,
+  Heart,
   History,
   ImageIcon,
   Info,
+  Lightbulb,
   Loader2,
   LogIn,
   Paperclip,
@@ -25,6 +38,7 @@ import {
   ShieldAlert,
   Sparkles,
   Target,
+  Trash2,
   TrendingDown,
   TrendingUp,
   Trophy,
@@ -37,13 +51,16 @@ import { toast } from "sonner";
 import type { AnalysisResult, CustomStrategy } from "../backend.d";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 import {
+  useAddTradeEntry,
   useAnalysisHistory,
   useAnalyzeStrategy,
   useAnalyzeStrategyWithImage,
   useApprovedStrategies,
   useClearHistory,
   useCustomStrategies,
+  useFavoriteStrategies,
   useGenerateCustomStrategy,
+  useToggleFavoriteStrategy,
 } from "../hooks/useQueries";
 
 // ─── Gemini Client-Side Parser ────────────────────────────────
@@ -281,6 +298,86 @@ function recoverAnalysisResult(result: AnalysisResult): AnalysisResult {
   }
 
   return result;
+}
+
+// ─── Pollinations AI Fallback ─────────────────────────────────
+
+const POLLINATIONS_URL = "https://text.pollinations.ai/openai";
+
+async function callPollinationsAI(
+  strategyName: string,
+  symbol: string,
+  notes: string,
+): Promise<Partial<AnalysisResult>> {
+  const prompt = `You are a professional trading analyst. Analyze ${symbol} using the ${strategyName} strategy.${notes ? `\nExtra context: ${notes}` : ""}
+IMPORTANT: Return ONLY a raw JSON object. No markdown, no code fences, no extra text before or after. Start your response with { and end with }.
+Required JSON format:
+{"signal":"BUY or SELL","entryPrice":"numeric value","stopLoss":"numeric value","takeProfit":"numeric value","riskLevel":"Low or Medium or High","confidence":"e.g. 72%","probability":"e.g. 68%","entryConfidence":"e.g. 75%","stopLossSafety":"Good or Fair or Poor","takeProfitProbability":"e.g. 65%","marketTrend":"Bullish or Bearish or Neutral","strategyUsed":"strategy name","explanation":"2-3 sentence analysis"}`;
+
+  const body = JSON.stringify({
+    model: "openai",
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const resp = await fetch(POLLINATIONS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Pollinations API error: ${resp.status}`);
+  }
+
+  const data = (await resp.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const content = data?.choices?.[0]?.message?.content ?? "";
+
+  // Strip markdown fences
+  const stripped = content
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```\s*$/, "")
+    .trim();
+
+  const tryParse = (jsonStr: string): Partial<AnalysisResult> => {
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    const getString = (key: string): string => {
+      const val = parsed[key];
+      return typeof val === "string" ? val : "";
+    };
+    return {
+      signal: getString("signal") || "N/A",
+      entryPrice: getString("entryPrice") || "N/A",
+      stopLoss: getString("stopLoss") || "N/A",
+      takeProfit: getString("takeProfit") || "N/A",
+      riskLevel: getString("riskLevel") || "Medium",
+      confidence: getString("confidence") || undefined,
+      probability: getString("probability") || undefined,
+      entryConfidence: getString("entryConfidence") || undefined,
+      stopLossSafety: getString("stopLossSafety") || undefined,
+      takeProfitProbability: getString("takeProfitProbability") || undefined,
+      marketTrend: getString("marketTrend") || undefined,
+      strategyUsed: getString("strategyUsed") || undefined,
+      explanation: getString("explanation") || "AI analysis complete.",
+    };
+  };
+
+  try {
+    return tryParse(stripped);
+  } catch {
+    // Try to extract JSON from the content
+    const jsonMatch = /\{[\s\S]*\}/.exec(stripped);
+    if (jsonMatch) {
+      try {
+        return tryParse(jsonMatch[0]);
+      } catch {
+        // ignore
+      }
+    }
+    throw new Error(`Failed to parse AI response: ${content.slice(0, 100)}`);
+  }
 }
 
 // ─── Constants ────────────────────────────────────────────────
@@ -662,7 +759,10 @@ function AnalysisCard({ result }: { result: AnalysisResult }) {
 
   const isBuy = r.signal.toUpperCase().includes("BUY");
   const isError =
-    r.signal === "N/A" || r.signal === "Error" || r.signal === "TODO";
+    r.signal === "N/A" ||
+    r.signal === "Error" ||
+    r.signal === "TODO" ||
+    r.signal === "POLLINATIONS";
 
   const riskKey = r.riskLevel?.includes("Low")
     ? "Low"
@@ -692,11 +792,10 @@ function AnalysisCard({ result }: { result: AnalysisResult }) {
               Analysis Failed
             </p>
           </div>
-          {r.explanation && (
-            <p className="text-xs text-foreground/80 leading-relaxed break-words font-mono bg-muted/40 rounded-lg p-3 border border-border/50 whitespace-pre-wrap">
-              {r.explanation}
-            </p>
-          )}
+          <p className="text-xs text-foreground/80 leading-relaxed">
+            AI analysis is temporarily unavailable. Please try again in a
+            moment.
+          </p>
         </div>
       </div>
     );
@@ -1017,6 +1116,16 @@ function ChatBubble({
                   <Trophy className="h-3.5 w-3.5" />
                   Submit Strategy
                 </button>
+              ) : chip === "__save_journal__" ? (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => onChipClick?.(chip)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-full text-xs font-semibold border border-bull/40 bg-bull/10 text-bull hover:bg-bull/20 hover:border-bull/60 transition-all active:scale-95"
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Save to Journal
+                </button>
               ) : chip === "__new_analysis__" ? (
                 <button
                   key={chip}
@@ -1062,21 +1171,34 @@ const ANALYZING_MESSAGES = [
   "Finalizing report...",
 ] as const;
 
+const ANALYSIS_DURATION = 12; // estimated seconds
+
 function AnalyzingStatus() {
   const [msgIndex, setMsgIndex] = useState(0);
   const [visible, setVisible] = useState(true);
+  const [secondsLeft, setSecondsLeft] = useState(ANALYSIS_DURATION);
 
   useEffect(() => {
     setMsgIndex(0);
     setVisible(true);
-    const interval = setInterval(() => {
+    setSecondsLeft(ANALYSIS_DURATION);
+
+    const msgInterval = setInterval(() => {
       setVisible(false);
       setTimeout(() => {
         setMsgIndex((prev) => (prev + 1) % ANALYZING_MESSAGES.length);
         setVisible(true);
       }, 250);
     }, 1600);
-    return () => clearInterval(interval);
+
+    const countdownInterval = setInterval(() => {
+      setSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => {
+      clearInterval(msgInterval);
+      clearInterval(countdownInterval);
+    };
   }, []);
 
   return (
@@ -1089,16 +1211,35 @@ function AnalyzingStatus() {
       <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
         <Brain className="h-3.5 w-3.5 text-primary" />
       </div>
-      <div className="bg-card border border-border border-l-2 border-l-primary/40 rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-3 min-w-[200px]">
-        <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" />
-        <motion.span
-          key={msgIndex}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: visible ? 1 : 0 }}
-          className="text-xs text-muted-foreground font-medium"
-        >
-          {ANALYZING_MESSAGES[msgIndex]}
-        </motion.span>
+      <div className="bg-card border border-border border-l-2 border-l-primary/40 rounded-2xl rounded-tl-sm px-4 py-3 flex flex-col gap-1.5 min-w-[220px]">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" />
+          <motion.span
+            key={msgIndex}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: visible ? 1 : 0 }}
+            className="text-xs text-muted-foreground font-medium"
+          >
+            {ANALYZING_MESSAGES[msgIndex]}
+          </motion.span>
+        </div>
+        {secondsLeft > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1 bg-muted/60 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-primary/60 rounded-full"
+                initial={{ width: "0%" }}
+                animate={{
+                  width: `${((ANALYSIS_DURATION - secondsLeft) / ANALYSIS_DURATION) * 100}%`,
+                }}
+                transition={{ duration: 1, ease: "linear" }}
+              />
+            </div>
+            <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+              ~{secondsLeft}s
+            </span>
+          </div>
+        )}
       </div>
     </motion.div>
   );
@@ -1143,14 +1284,20 @@ function StrategyRow({
   howItWorks,
   category,
   badge,
+  strategyId,
+  isFavorited,
   onSelect,
+  onToggleFavorite,
 }: {
   name: string;
   description: string;
   howItWorks: string;
   category?: string;
   badge?: string;
+  strategyId?: string;
+  isFavorited?: boolean;
   onSelect: () => void;
+  onToggleFavorite?: (id: string) => void;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const catColor = category ? STRATEGY_CATEGORY_COLORS[category] : "";
@@ -1184,6 +1331,24 @@ function StrategyRow({
             {description}
           </span>
         </button>
+        {/* Favorite button */}
+        {strategyId && onToggleFavorite && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(strategyId);
+            }}
+            className={`shrink-0 h-9 w-9 flex items-center justify-center rounded-full transition-colors min-h-[44px] ${
+              isFavorited
+                ? "text-bear bg-bear/10"
+                : "text-muted-foreground hover:text-bear hover:bg-bear/10"
+            }`}
+            aria-label={isFavorited ? "Unfavorite" : "Favorite"}
+          >
+            <Heart className={`h-4 w-4 ${isFavorited ? "fill-bear" : ""}`} />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setInfoOpen((p) => !p)}
@@ -1317,6 +1482,75 @@ function AddStrategyModal({
   );
 }
 
+// ─── AI Quick Tips ────────────────────────────────────────────
+
+const TRADING_TIPS = [
+  "Risk only 1–2% of your account per trade to protect your capital long-term.",
+  "Always use a stop loss — the market can move against you at any time.",
+  "The trend is your friend. Trade with the trend, not against it.",
+  "Never risk more than you can afford to lose. Capital preservation comes first.",
+  "A good Risk:Reward ratio is 1:2 or higher — let winners run, cut losers short.",
+  "Patience is a trader's edge. Wait for your setup, don't force trades.",
+  "Keep a trade journal. Reviewing your trades reveals patterns and mistakes.",
+  "Avoid trading during major news events unless you understand the risk.",
+  "Consistency beats big wins. Small, steady profits compound over time.",
+  "Emotions are your worst enemy. Stick to your strategy no matter what.",
+] as const;
+
+function AIQuickTips() {
+  const [tipIndex, setTipIndex] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => {
+        setTipIndex((prev) => (prev + 1) % TRADING_TIPS.length);
+        setVisible(true);
+      }, 300);
+    }, 6000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const nextTip = () => {
+    setVisible(false);
+    setTimeout(() => {
+      setTipIndex((prev) => (prev + 1) % TRADING_TIPS.length);
+      setVisible(true);
+    }, 200);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={nextTip}
+      className="w-full bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 flex items-start gap-3 hover:bg-primary/10 transition-colors text-left"
+      aria-label="Next trading tip"
+    >
+      <div className="shrink-0 h-6 w-6 rounded-lg bg-primary/15 flex items-center justify-center mt-0.5">
+        <Lightbulb className="h-3.5 w-3.5 text-primary" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-bold text-primary uppercase tracking-wider mb-1">
+          Trading Tip — tap to skip
+        </p>
+        <motion.p
+          key={tipIndex}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: visible ? 1 : 0 }}
+          transition={{ duration: 0.25 }}
+          className="text-xs text-foreground/80 leading-relaxed"
+        >
+          {TRADING_TIPS[tipIndex]}
+        </motion.p>
+      </div>
+      <span className="text-[9px] text-muted-foreground/50 font-mono shrink-0 mt-1">
+        {tipIndex + 1}/{TRADING_TIPS.length}
+      </span>
+    </button>
+  );
+}
+
 // ─── Strategy Box ─────────────────────────────────────────────
 
 const QUICK_PICKS = ["Scalping", "RSI Strategy", "Breakout", "Trend Following"];
@@ -1339,7 +1573,39 @@ function StrategyBox({
     useCustomStrategies();
   const { data: communityStrategies = [], isLoading: communityLoading } =
     useApprovedStrategies();
+  const { data: favoriteIds = [] } = useFavoriteStrategies();
+  const toggleFavorite = useToggleFavoriteStrategy();
   const generateMutation = useGenerateCustomStrategy();
+
+  // LocalStorage fallback for non-logged-in favorites
+  const [localFavorites, setLocalFavorites] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("strategy_favorites");
+      return stored ? (JSON.parse(stored) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const effectiveFavorites = isLoggedIn ? favoriteIds : localFavorites;
+
+  const handleToggleFavorite = async (strategyId: string) => {
+    if (isLoggedIn) {
+      try {
+        await toggleFavorite.mutateAsync(strategyId);
+      } catch {
+        toast.error("Failed to update favorites");
+      }
+    } else {
+      setLocalFavorites((prev) => {
+        const updated = prev.includes(strategyId)
+          ? prev.filter((id) => id !== strategyId)
+          : [...prev, strategyId];
+        localStorage.setItem("strategy_favorites", JSON.stringify(updated));
+        return updated;
+      });
+    }
+  };
 
   const handleGenerate = async (description: string) => {
     try {
@@ -1357,6 +1623,11 @@ function StrategyBox({
     BUILTIN_STRATEGIES.length +
     customStrategies.length +
     communityStrategies.length;
+
+  // Get favorited built-in strategies
+  const favoritedBuiltins = BUILTIN_STRATEGIES.filter((s) =>
+    effectiveFavorites.includes(s.name),
+  );
 
   return (
     <>
@@ -1435,8 +1706,36 @@ function StrategyBox({
               className="overflow-hidden"
             >
               <Separator />
-              <ScrollArea className="max-h-[300px]">
+              <ScrollArea className="max-h-[360px]">
                 <div className="py-1">
+                  {/* Section: Favorites — shown only if there are favorites */}
+                  {favoritedBuiltins.length > 0 && (
+                    <>
+                      <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
+                        <div className="h-1.5 w-1.5 rounded-full bg-bear" />
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                          Favorites
+                        </p>
+                      </div>
+                      {favoritedBuiltins.map((s) => (
+                        <StrategyRow
+                          key={`fav-${s.name}`}
+                          name={s.name}
+                          description={s.description}
+                          howItWorks={s.howItWorks}
+                          category={s.category}
+                          strategyId={s.name}
+                          isFavorited={true}
+                          onSelect={() => {
+                            setExpanded(false);
+                            onStrategySelect(s.name, false, s.description);
+                          }}
+                          onToggleFavorite={handleToggleFavorite}
+                        />
+                      ))}
+                    </>
+                  )}
+
                   {/* Section: Built-in */}
                   <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
                     <div className="h-1.5 w-1.5 rounded-full bg-primary/80" />
@@ -1451,10 +1750,13 @@ function StrategyBox({
                       description={s.description}
                       howItWorks={s.howItWorks}
                       category={s.category}
+                      strategyId={s.name}
+                      isFavorited={effectiveFavorites.includes(s.name)}
                       onSelect={() => {
                         setExpanded(false);
                         onStrategySelect(s.name, false, s.description);
                       }}
+                      onToggleFavorite={handleToggleFavorite}
                     />
                   ))}
 
@@ -1483,10 +1785,13 @@ function StrategyBox({
                             description={s.description}
                             howItWorks={s.howItWorks}
                             badge="Custom"
+                            strategyId={s.id}
+                            isFavorited={effectiveFavorites.includes(s.id)}
                             onSelect={() => {
                               setExpanded(false);
                               onStrategySelect(s.name, true, s.description);
                             }}
+                            onToggleFavorite={handleToggleFavorite}
                           />
                         ))
                       )}
@@ -1514,10 +1819,13 @@ function StrategyBox({
                             description={s.description}
                             howItWorks={s.description}
                             badge="Community"
+                            strategyId={s.id}
+                            isFavorited={effectiveFavorites.includes(s.id)}
                             onSelect={() => {
                               setExpanded(false);
                               onStrategySelect(s.name, true, s.description);
                             }}
+                            onToggleFavorite={handleToggleFavorite}
                           />
                         ))
                       )}
@@ -1537,6 +1845,48 @@ function StrategyBox({
         isGenerating={generateMutation.isPending}
       />
     </>
+  );
+}
+
+// ─── Confidence Sparkline ─────────────────────────────────────
+
+function ConfidenceSparkline({
+  confidence,
+  signal,
+}: {
+  confidence?: string;
+  signal?: string;
+}) {
+  const parsed = confidence
+    ? Number.parseInt(confidence.replace(/[^0-9]/g, ""), 10)
+    : 0;
+  const pct = Number.isNaN(parsed) ? 0 : Math.min(100, Math.max(0, parsed));
+  if (pct === 0) return null;
+
+  const bars = 5;
+  const filled = Math.round((pct / 100) * bars);
+  const isBuy = (signal ?? "").toUpperCase().includes("BUY");
+  const barColor = isBuy ? "bg-bull" : "bg-bear";
+
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <div className="flex gap-0.5 items-end">
+        {Array.from({ length: bars }).map((_, idx) => {
+          const heightPct = (idx + 1) * 20;
+          return (
+            <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: fixed 5 bars
+              key={idx}
+              className={`w-1.5 rounded-sm transition-all ${idx < filled ? barColor : "bg-muted/40"}`}
+              style={{ height: `${heightPct * 0.3 + 4}px` }}
+            />
+          );
+        })}
+      </div>
+      <span className="text-[10px] font-mono text-muted-foreground">
+        {pct}%
+      </span>
+    </div>
   );
 }
 
@@ -1562,6 +1912,7 @@ function HistorySection({
       <div className="flex items-center justify-between mb-3">
         <button
           type="button"
+          data-ocid="history.toggle"
           onClick={() => setExpanded((p) => !p)}
           className="flex items-center gap-1.5 text-sm font-semibold text-foreground hover:text-primary transition-colors"
         >
@@ -1582,6 +1933,7 @@ function HistorySection({
           <Button
             variant="ghost"
             size="sm"
+            data-ocid="history.delete_button"
             className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
             onClick={onClear}
             disabled={isClearing}
@@ -1601,8 +1953,11 @@ function HistorySection({
           ))}
         </div>
       ) : history.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground bg-muted/20 rounded-xl border border-border/50">
-          <ArrowUpDown className="h-7 w-7 mx-auto mb-2 opacity-30" />
+        <div
+          data-ocid="history.empty_state"
+          className="text-center py-8 text-muted-foreground bg-muted/20 rounded-xl border border-border/50"
+        >
+          <History className="h-7 w-7 mx-auto mb-2 opacity-30" />
           <p className="text-sm font-medium">No analyses yet</p>
           <p className="text-xs mt-1 opacity-70">
             Pick a strategy above to run your first analysis
@@ -1610,25 +1965,508 @@ function HistorySection({
         </div>
       ) : (
         <div className="space-y-2">
-          {shown.map((result, i) => (
-            <div
-              key={`hist-${i}-${String(result.timestamp)}`}
-              className="opacity-90 hover:opacity-100 transition-opacity"
-            >
-              <AnalysisCard result={result} />
-            </div>
-          ))}
+          {shown.map((result, i) => {
+            const r = recoverAnalysisResult(result);
+            return (
+              <div
+                key={`hist-${i}-${String(result.timestamp)}`}
+                data-ocid={`history.item.${i + 1}`}
+                className="opacity-90 hover:opacity-100 transition-opacity"
+              >
+                {/* Mini history card with sparkline */}
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className="px-3 py-2 flex items-start gap-3">
+                    <div
+                      className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${r.signal.toUpperCase().includes("BUY") ? "bg-bull/15" : r.signal === "N/A" || r.signal === "Error" ? "bg-muted/40" : "bg-bear/15"}`}
+                    >
+                      {r.signal.toUpperCase().includes("BUY") ? (
+                        <ArrowUp className="h-4 w-4 text-bull" />
+                      ) : r.signal.toUpperCase().includes("SELL") ? (
+                        <ArrowDown className="h-4 w-4 text-bear" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`text-xs font-bold font-mono ${r.signal.toUpperCase().includes("BUY") ? "text-bull" : "text-bear"}`}
+                        >
+                          {r.signal}
+                        </span>
+                        {r.strategyUsed && (
+                          <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
+                            {r.strategyUsed}
+                          </span>
+                        )}
+                        {r.timestamp && (
+                          <span className="text-[10px] text-muted-foreground/60 ml-auto">
+                            {new Date(
+                              Number(r.timestamp) / 1_000_000,
+                            ).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                      <ConfidenceSparkline
+                        confidence={r.confidence}
+                        signal={r.signal}
+                      />
+                    </div>
+                  </div>
+                  <div className="px-3 pb-3">
+                    <AnalysisCard result={result} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
+// ─── RiskCalculator ───────────────────────────────────────────
+
+function RiskCalculator() {
+  const [expanded, setExpanded] = useState(false);
+  const [entry, setEntry] = useState("");
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [accountSize, setAccountSize] = useState("10000");
+  const [riskPct, setRiskPct] = useState([2]);
+
+  const entryNum = Number.parseFloat(entry);
+  const slNum = Number.parseFloat(stopLoss);
+  const tpNum = Number.parseFloat(takeProfit);
+
+  const hasValues =
+    !Number.isNaN(entryNum) &&
+    !Number.isNaN(slNum) &&
+    !Number.isNaN(tpNum) &&
+    entryNum !== 0;
+
+  const riskPips = hasValues ? Math.abs(entryNum - slNum) : 0;
+  const rewardPips = hasValues ? Math.abs(tpNum - entryNum) : 0;
+  const rrRatio =
+    hasValues && riskPips > 0 ? (rewardPips / riskPips).toFixed(2) : null;
+  const riskPercent =
+    hasValues && entryNum !== 0
+      ? ((riskPips / entryNum) * 100).toFixed(2)
+      : null;
+  const gainPercent =
+    hasValues && entryNum !== 0
+      ? ((rewardPips / entryNum) * 100).toFixed(2)
+      : null;
+
+  const accountNum = Number.parseFloat(accountSize.replace(/,/g, "")) || 10000;
+  const positionSize =
+    hasValues && riskPips > 0
+      ? ((accountNum * (riskPct[0]! / 100)) / (riskPips / entryNum)).toFixed(2)
+      : null;
+
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <button
+        type="button"
+        className="w-full flex items-center px-4 min-h-[52px] gap-2.5 hover:bg-muted/20 transition-colors"
+        onClick={() => setExpanded((p) => !p)}
+        aria-expanded={expanded}
+      >
+        <div className="h-7 w-7 rounded-lg bg-gold/10 flex items-center justify-center shrink-0">
+          <Calculator className="h-3.5 w-3.5 text-gold" />
+        </div>
+        <span className="font-bold text-sm text-foreground flex-1 text-left">
+          Risk Calculator
+        </span>
+        {rrRatio && (
+          <Badge
+            variant="secondary"
+            className="text-[10px] font-mono text-gold shrink-0"
+          >
+            R:R 1:{rrRatio}
+          </Badge>
+        )}
+        <div className="shrink-0 h-8 w-8 flex items-center justify-center">
+          {expanded ? (
+            <ChevronUp className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          )}
+        </div>
+      </button>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22 }}
+            className="overflow-hidden"
+          >
+            <Separator />
+            <div className="p-4 space-y-4">
+              {/* Price inputs */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Entry Price
+                  </p>
+                  <Input
+                    type="number"
+                    value={entry}
+                    onChange={(e) => setEntry(e.target.value)}
+                    placeholder="0.00"
+                    className="h-9 text-sm font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-semibold text-bear uppercase tracking-wide">
+                    Stop Loss
+                  </p>
+                  <Input
+                    type="number"
+                    value={stopLoss}
+                    onChange={(e) => setStopLoss(e.target.value)}
+                    placeholder="0.00"
+                    className="h-9 text-sm font-mono border-bear/30 focus-visible:ring-bear/40"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-semibold text-bull uppercase tracking-wide">
+                    Take Profit
+                  </p>
+                  <Input
+                    type="number"
+                    value={takeProfit}
+                    onChange={(e) => setTakeProfit(e.target.value)}
+                    placeholder="0.00"
+                    className="h-9 text-sm font-mono border-bull/30 focus-visible:ring-bull/40"
+                  />
+                </div>
+              </div>
+
+              {/* Results */}
+              {hasValues && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+                >
+                  <div className="bg-muted/40 rounded-lg p-2.5 text-center border border-border/50">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+                      R:R Ratio
+                    </p>
+                    <p className="font-mono text-sm font-bold text-gold">
+                      {rrRatio ? `1:${rrRatio}` : "—"}
+                    </p>
+                  </div>
+                  <div className="bg-bear/8 rounded-lg p-2.5 text-center border border-bear/20">
+                    <p className="text-[10px] text-bear uppercase tracking-wide mb-1">
+                      Risk %
+                    </p>
+                    <p className="font-mono text-sm font-bold text-bear">
+                      {riskPercent ? `${riskPercent}%` : "—"}
+                    </p>
+                  </div>
+                  <div className="bg-bull/8 rounded-lg p-2.5 text-center border border-bull/20">
+                    <p className="text-[10px] text-bull uppercase tracking-wide mb-1">
+                      Gain %
+                    </p>
+                    <p className="font-mono text-sm font-bold text-bull">
+                      {gainPercent ? `${gainPercent}%` : "—"}
+                    </p>
+                  </div>
+                  <div className="bg-primary/8 rounded-lg p-2.5 text-center border border-primary/20">
+                    <p className="text-[10px] text-primary uppercase tracking-wide mb-1">
+                      Pos. Size
+                    </p>
+                    <p className="font-mono text-sm font-bold text-primary">
+                      {positionSize ? `$${positionSize}` : "—"}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Account settings */}
+              <div className="grid grid-cols-2 gap-3 pt-1 border-t border-border/50">
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Account Size ($)
+                  </p>
+                  <Input
+                    type="number"
+                    value={accountSize}
+                    onChange={(e) => setAccountSize(e.target.value)}
+                    placeholder="10000"
+                    className="h-9 text-sm font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Risk per Trade: {riskPct[0]}%
+                  </p>
+                  <div className="flex items-center gap-2 h-9">
+                    <Slider
+                      value={riskPct}
+                      onValueChange={setRiskPct}
+                      min={0.5}
+                      max={5}
+                      step={0.5}
+                      className="flex-1"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── SaveToJournalForm ────────────────────────────────────────
+
+function SaveToJournalForm({
+  prefillSymbol,
+  prefillDirection,
+  prefillStrategy,
+  onSaved,
+  onCancel,
+}: {
+  prefillSymbol?: string;
+  prefillDirection?: string;
+  prefillStrategy?: string;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [symbol, setSymbol] = useState(prefillSymbol ?? "");
+  const [direction, setDirection] = useState<"BUY" | "SELL">(
+    prefillDirection?.toUpperCase() === "SELL" ? "SELL" : "BUY",
+  );
+  const [entryPrice, setEntryPrice] = useState("");
+  const [exitPrice, setExitPrice] = useState("");
+  const [outcome, setOutcome] = useState("Open");
+  const [pnl, setPnl] = useState("");
+  const [notes, setNotes] = useState("");
+  const [strategy, setStrategy] = useState(prefillStrategy ?? "");
+  const addEntry = useAddTradeEntry();
+
+  const handleSave = async () => {
+    if (!symbol.trim()) {
+      toast.error("Symbol is required");
+      return;
+    }
+    try {
+      await addEntry.mutateAsync({
+        symbol: symbol.trim(),
+        direction,
+        entryPrice: entryPrice.trim(),
+        exitPrice: exitPrice.trim(),
+        outcome,
+        pnl: pnl.trim(),
+        notes: notes.trim(),
+        strategy: strategy.trim(),
+      });
+      toast.success("Saved to journal!");
+      onSaved();
+    } catch {
+      toast.error("Failed to save to journal");
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-card border border-border rounded-xl p-4 space-y-3 w-full max-w-[320px]"
+    >
+      <div className="flex items-center gap-2">
+        <BookOpen className="h-4 w-4 text-primary" />
+        <p className="font-bold text-sm text-foreground">Save to Journal</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+            Symbol
+          </p>
+          <Input
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            placeholder="BTC/USD"
+            className="h-8 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+            Direction
+          </p>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => setDirection("BUY")}
+              className={`flex-1 h-8 text-xs font-bold rounded-md border transition-all ${direction === "BUY" ? "bg-bull/20 border-bull/50 text-bull" : "border-border text-muted-foreground hover:bg-muted/30"}`}
+            >
+              BUY
+            </button>
+            <button
+              type="button"
+              onClick={() => setDirection("SELL")}
+              className={`flex-1 h-8 text-xs font-bold rounded-md border transition-all ${direction === "SELL" ? "bg-bear/20 border-bear/50 text-bear" : "border-border text-muted-foreground hover:bg-muted/30"}`}
+            >
+              SELL
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+            Entry
+          </p>
+          <Input
+            value={entryPrice}
+            onChange={(e) => setEntryPrice(e.target.value)}
+            placeholder="0.00"
+            className="h-8 text-xs font-mono"
+          />
+        </div>
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+            Exit
+          </p>
+          <Input
+            value={exitPrice}
+            onChange={(e) => setExitPrice(e.target.value)}
+            placeholder="0.00"
+            className="h-8 text-xs font-mono"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+            Outcome
+          </p>
+          <Select value={outcome} onValueChange={setOutcome}>
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Open">Open</SelectItem>
+              <SelectItem value="Win">Win</SelectItem>
+              <SelectItem value="Loss">Loss</SelectItem>
+              <SelectItem value="Breakeven">Breakeven</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+            P&amp;L
+          </p>
+          <Input
+            value={pnl}
+            onChange={(e) => setPnl(e.target.value)}
+            placeholder="+$120"
+            className="h-8 text-xs font-mono"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+          Strategy
+        </p>
+        <Input
+          value={strategy}
+          onChange={(e) => setStrategy(e.target.value)}
+          placeholder="e.g. RSI Strategy"
+          className="h-8 text-xs"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+          Notes (optional)
+        </p>
+        <Textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Any observations..."
+          className="resize-none text-xs min-h-[56px] rounded-lg"
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onCancel}
+          className="flex-1 rounded-full text-xs h-8"
+          disabled={addEntry.isPending}
+        >
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          onClick={handleSave}
+          disabled={addEntry.isPending || !symbol.trim()}
+          className="flex-1 rounded-full text-xs h-8"
+        >
+          {addEntry.isPending ? (
+            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+          ) : (
+            <BookOpen className="h-3 w-3 mr-1" />
+          )}
+          Save
+        </Button>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Guest Analysis Session ───────────────────────────────────
+
+const GUEST_SESSION_KEY = "smart_trade_guest_used";
+
+function hasUsedGuestAnalysis(): boolean {
+  try {
+    return sessionStorage.getItem(GUEST_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markGuestAnalysisUsed() {
+  try {
+    sessionStorage.setItem(GUEST_SESSION_KEY, "1");
+  } catch {
+    // ignore
+  }
+}
+
 // ─── Main AIAnalysis component ────────────────────────────────
 
-export function AIAnalysis() {
+interface AIAnalysisProps {
+  quickAnalyze?: { symbol: string; ts: number } | null;
+  onQuickAnalyzeHandled?: () => void;
+}
+
+export function AIAnalysis({
+  quickAnalyze,
+  onQuickAnalyzeHandled,
+}: AIAnalysisProps) {
   const { identity, login, isLoggingIn } = useInternetIdentity();
   const isLoggedIn = !!identity;
+
+  // Guest mode: allow 1 free analysis without login
+  const [guestMode, setGuestMode] = useState(false);
+  const [guestUsed, setGuestUsed] = useState(hasUsedGuestAnalysis);
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1648,14 +2486,16 @@ export function AIAnalysis() {
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isSending = useRef(false);
   const lastAnalysisParams = useRef<{
     strategyName: string;
     symbol: string;
     notes: string;
     imageFile?: File;
+    result?: AnalysisResult;
   } | null>(null);
 
-  // History
+  // History (only when logged in)
   const { data: history = [], isLoading: historyLoading } =
     useAnalysisHistory();
   const analyze = useAnalyzeStrategy();
@@ -1696,7 +2536,12 @@ export function AIAnalysis() {
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      const container = document.getElementById("chat-scroll-container");
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      } else {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
     });
   }, []);
 
@@ -1763,7 +2608,8 @@ export function AIAnalysis() {
       notes: string,
       attachedImage?: File,
     ) => {
-      if (!identity) return;
+      const isGuest = !identity;
+      if (isGuest && !guestMode) return;
       setPhase("analyzing");
 
       lastAnalysisParams.current = {
@@ -1771,50 +2617,121 @@ export function AIAnalysis() {
         symbol,
         notes,
         imageFile: attachedImage,
+        result: undefined,
       };
 
       try {
-        let result: AnalysisResult;
-        if (attachedImage) {
-          const base64 = await fileToBase64(attachedImage);
-          result = await analyzeWithImage.mutateAsync({
+        const isGuest = !identity;
+        let finalResult: AnalysisResult;
+
+        if (isGuest) {
+          // Guest mode: use Pollinations directly
+          const pollinationsResult = await callPollinationsAI(
             strategyName,
             symbol,
-            notes: notes || undefined,
-            imageBase64: base64,
-            mimeType: attachedImage.type,
-          });
+            notes,
+          );
+          finalResult = {
+            signal: pollinationsResult.signal ?? "N/A",
+            entryPrice: pollinationsResult.entryPrice ?? "N/A",
+            stopLoss: pollinationsResult.stopLoss ?? "N/A",
+            takeProfit: pollinationsResult.takeProfit ?? "N/A",
+            riskLevel: pollinationsResult.riskLevel ?? "Medium",
+            confidence: pollinationsResult.confidence ?? "",
+            probability: pollinationsResult.probability ?? "",
+            entryConfidence: pollinationsResult.entryConfidence ?? "",
+            stopLossSafety: pollinationsResult.stopLossSafety ?? "",
+            takeProfitProbability:
+              pollinationsResult.takeProfitProbability ?? "",
+            marketTrend: pollinationsResult.marketTrend ?? "",
+            strategyUsed: pollinationsResult.strategyUsed ?? strategyName,
+            explanation: pollinationsResult.explanation ?? "Analysis complete.",
+            timestamp: BigInt(Date.now() * 1_000_000),
+          };
+          // Mark guest analysis used
+          markGuestAnalysisUsed();
+          setGuestUsed(true);
         } else {
-          result = await analyze.mutateAsync({
-            principal: identity.getPrincipal(),
-            strategyName,
-            symbol,
-            notes: notes || undefined,
-          });
+          let result: AnalysisResult;
+          if (attachedImage) {
+            const base64 = await fileToBase64(attachedImage);
+            result = await analyzeWithImage.mutateAsync({
+              strategyName,
+              symbol,
+              notes: notes || undefined,
+              imageBase64: base64,
+              mimeType: attachedImage.type,
+            });
+          } else {
+            result = await analyze.mutateAsync({
+              principal: identity!.getPrincipal(),
+              strategyName,
+              symbol,
+              notes: notes || undefined,
+            });
+          }
+
+          // Try to recover from parse failures
+          const recovered = recoverAnalysisResult(result);
+
+          // If backend failed or signalled to use Pollinations, use it as fallback
+          finalResult = recovered;
+          const isBackendError =
+            recovered.signal === "Error" ||
+            recovered.signal === "N/A" ||
+            recovered.signal === "TODO" ||
+            recovered.signal === "" ||
+            recovered.signal === "POLLINATIONS";
+          if (isBackendError) {
+            try {
+              const pollinationsResult = await callPollinationsAI(
+                strategyName,
+                symbol,
+                notes,
+              );
+              if (
+                pollinationsResult.signal &&
+                pollinationsResult.signal !== "N/A"
+              ) {
+                finalResult = {
+                  ...recovered,
+                  ...pollinationsResult,
+                  timestamp: recovered.timestamp,
+                };
+              }
+            } catch (pollinationsErr) {
+              console.error(
+                "Pollinations fallback also failed:",
+                pollinationsErr,
+              );
+            }
+          }
         }
 
-        // Try to recover from parse failures
-        const recovered = recoverAnalysisResult(result);
+        // Store result for Save to Journal
+        if (lastAnalysisParams.current) {
+          lastAnalysisParams.current.result = finalResult;
+        }
 
         addMessage({
           role: "ai",
           type: "result",
           content: "",
-          result: recovered,
+          result: finalResult,
         });
 
         setTimeout(() => {
           const isStillNA =
-            recovered.signal === "N/A" ||
-            recovered.signal === "Error" ||
-            recovered.signal === "TODO";
+            finalResult.signal === "N/A" ||
+            finalResult.signal === "Error" ||
+            finalResult.signal === "TODO";
 
           if (isStillNA) {
             addMessage({
               role: "ai",
               type: "error",
               content:
-                recovered.explanation ||
+                finalResult.explanation ||
                 "Analysis failed. Check the result card above for the raw error.",
               chips: ["__retry__"],
               chipsUsed: false,
@@ -1824,7 +2741,11 @@ export function AIAnalysis() {
               role: "ai",
               type: "text",
               content: "Analysis complete! What would you like to do next?",
-              chips: ["__submit_strategy__", "__new_analysis__"],
+              chips: [
+                "__submit_strategy__",
+                "__save_journal__",
+                "__new_analysis__",
+              ],
               chipsUsed: false,
             });
           }
@@ -1847,8 +2768,49 @@ export function AIAnalysis() {
         setPhase("greeting");
       }
     },
-    [identity, analyze, analyzeWithImage, addMessage],
+    [identity, guestMode, analyze, analyzeWithImage, addMessage],
   );
+
+  // ─── Handle quickAnalyze from Dashboard ───────────────────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: respond to ts change
+  useEffect(() => {
+    if (!quickAnalyze || !isLoggedIn) return;
+    const { symbol } = quickAnalyze;
+    onQuickAnalyzeHandled?.();
+    const t = setTimeout(() => {
+      const questions = getQuestionsForStrategy("Trend Following", false);
+      setCurrentStrategy("Trend Following");
+      setIsCustomStrategy(false);
+      setCurrentQuestions(questions);
+      setAnswers({ symbol });
+      setCurrentSymbol(symbol);
+      setQuestionIndex(0);
+      handleImageClear();
+      addMessage({
+        role: "user",
+        type: "text",
+        content: `Quick Analyze: ${symbol}`,
+      });
+      setTimeout(() => {
+        // Skip to timeframe question (index 1) since symbol is pre-filled
+        const tq = questions[1];
+        if (tq) {
+          addMessage({
+            role: "ai",
+            type: "text",
+            content: `Analyzing ${symbol} with Trend Following. ${tq.text}`,
+            chips: tq.chips,
+            isImageUploadPrompt: tq.isImageUpload,
+            chipsUsed: false,
+          });
+          setQuestionIndex(1);
+          setPhase("questioning");
+        }
+      }, 300);
+    }, 100);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickAnalyze?.ts]);
 
   // ─── Handle strategy selection ────────────────────────────────
 
@@ -2011,6 +2973,41 @@ export function AIAnalysis() {
         return;
       }
 
+      if (chip === "__save_journal__") {
+        markLastChipsUsed();
+        addMessage({ role: "user", type: "text", content: "Save to Journal" });
+        const params = lastAnalysisParams.current;
+        const result = params?.result;
+        setTimeout(() => {
+          addMessage({
+            role: "ai",
+            type: "result",
+            content: (
+              <SaveToJournalForm
+                prefillSymbol={params?.symbol}
+                prefillDirection={result?.signal}
+                prefillStrategy={result?.strategyUsed ?? params?.strategyName}
+                onSaved={() => {
+                  addMessage({
+                    role: "ai",
+                    type: "text",
+                    content: "✅ Trade saved to your journal!",
+                  });
+                }}
+                onCancel={() => {
+                  addMessage({
+                    role: "ai",
+                    type: "text",
+                    content: "Journal entry cancelled.",
+                  });
+                }}
+              />
+            ) as unknown as string,
+          });
+        }, 300);
+        return;
+      }
+
       if (chip === "__new_analysis__") {
         markLastChipsUsed();
         addMessage({ role: "user", type: "text", content: "New Analysis" });
@@ -2036,6 +3033,24 @@ export function AIAnalysis() {
           setCurrentQuestions([]);
           handleImageClear();
         }, 300);
+        return;
+      }
+
+      if (chip === "__market_overview__") {
+        markLastChipsUsed();
+        addMessage({ role: "user", type: "text", content: "Market Overview" });
+        setTimeout(() => {
+          addMessage({
+            role: "ai",
+            type: "text",
+            content: "Fetching market overview across all assets... 🌍",
+          });
+          void runAnalysis(
+            "Market Overview",
+            "BTC/USD",
+            "Give me a brief overview of the current market conditions across crypto, forex, and commodities. Comment on BTC, Gold, EUR/USD trends.",
+          );
+        }, 200);
         return;
       }
 
@@ -2071,7 +3086,8 @@ export function AIAnalysis() {
   const handleSend = useCallback(() => {
     const text = inputText.trim();
     if (!text && !imageFile) return;
-    if (isAnalyzing) return;
+    if (isAnalyzing || isSending.current) return;
+    isSending.current = true;
 
     setInputText("");
     markLastChipsUsed();
@@ -2096,10 +3112,12 @@ export function AIAnalysis() {
     if (phase === "questioning") {
       const q = currentQuestions[questionIndex];
       if (q?.isImageUpload && imageFile) {
+        isSending.current = false;
         handleAnswer("uploaded", questionIndex, imageFile);
         return;
       }
       if (text) {
+        isSending.current = false;
         handleAnswer(text, questionIndex);
         return;
       }
@@ -2110,17 +3128,35 @@ export function AIAnalysis() {
       const lower = text.toLowerCase();
       if (lower.includes("btc") || lower.includes("bitcoin")) return "BTC/USD";
       if (lower.includes("eth") || lower.includes("ethereum")) return "ETH/USD";
-      if (lower.includes("gold") || lower.includes("xau")) return "XAU/USD";
-      if (lower.includes("silver") || lower.includes("xag")) return "XAG/USD";
-      if (lower.includes("eur")) return "EUR/USD";
-      if (lower.includes("gbp")) return "GBP/USD";
-      if (lower.includes("jpy") || lower.includes("yen")) return "USD/JPY";
-      if (lower.includes("nasdaq")) return "NASDAQ";
-      if (lower.includes("s&p") || lower.includes("sp500")) return "S&P500";
-      if (lower.includes("oil") || lower.includes("crude")) return "OIL";
+      if (lower.includes("xau") || lower.includes("gold")) return "XAU/USD";
+      if (lower.includes("xag") || lower.includes("silver")) return "XAG/USD";
+      if (lower.includes("euro") || lower.includes("eur")) return "EUR/USD";
+      if (lower.includes("pound") || lower.includes("gbp")) return "GBP/USD";
+      if (lower.includes("yen") || lower.includes("jpy")) return "USD/JPY";
+      if (
+        lower.includes("ndx") ||
+        lower.includes("nasdaq100") ||
+        lower.includes("nasdaq")
+      )
+        return "NASDAQ";
+      if (
+        lower.includes("spx") ||
+        lower.includes("s&p") ||
+        lower.includes("sp500") ||
+        lower.includes("s&p500")
+      )
+        return "S&P500";
+      if (
+        lower.includes("crude") ||
+        lower.includes("wti") ||
+        lower.includes("usoil") ||
+        lower.includes("oil")
+      )
+        return "OIL";
       return "BTC/USD";
     })();
 
+    isSending.current = false;
     setTimeout(() => {
       addMessage({
         role: "ai",
@@ -2163,15 +3199,59 @@ export function AIAnalysis() {
     }
   };
 
+  const handleClearChat = useCallback(() => {
+    const now = new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    setMessages([
+      {
+        id: "greeting-clear",
+        role: "ai",
+        type: "text",
+        timestamp: now,
+        content:
+          "👋 Hey! I'm your AI trading analyst. Pick a strategy below or type a question to get started.",
+      },
+    ]);
+    setPhase("greeting");
+    setQuestionIndex(0);
+    setAnswers({});
+    setCurrentStrategy("");
+    setCurrentQuestions([]);
+    handleImageClear();
+  }, [handleImageClear]);
+
   // Step info for questions
   const stepInfo =
     phase === "questioning" && currentQuestions.length > 0
       ? `Step ${questionIndex + 1} of ${currentQuestions.length}`
       : undefined;
 
+  // ─── Init greeting for guest mode ───────────────────────────
+  useEffect(() => {
+    if (!guestMode) return;
+    setMessages([
+      {
+        id: "greeting-guest",
+        role: "ai",
+        type: "text",
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        content:
+          "👋 Hey! You have 1 free analysis. Pick a strategy below or type a question to get started.",
+      },
+    ]);
+    setPhase("greeting");
+    setQuestionIndex(0);
+    setAnswers({});
+  }, [guestMode]);
+
   // ─── Login gate ───────────────────────────────────────────────
 
-  if (!isLoggedIn) {
+  if (!isLoggedIn && !guestMode) {
     return (
       <div className="flex flex-col gap-4 pb-2">
         <div className="flex items-center gap-2">
@@ -2203,6 +3283,7 @@ export function AIAnalysis() {
             disabled={isLoggingIn}
             size="lg"
             className="rounded-full px-8 mt-1"
+            data-ocid="ai.login_button"
           >
             {isLoggingIn ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -2211,6 +3292,22 @@ export function AIAnalysis() {
             )}
             {isLoggingIn ? "Signing in..." : "Sign In to Continue"}
           </Button>
+
+          {/* Guest try without login */}
+          {!guestUsed ? (
+            <button
+              type="button"
+              data-ocid="ai.guest_button"
+              onClick={() => setGuestMode(true)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+            >
+              Try 1 free analysis without signing in
+            </button>
+          ) : (
+            <p className="text-xs text-muted-foreground/70">
+              Free analysis used. Sign in for unlimited access.
+            </p>
+          )}
         </motion.div>
 
         <p className="text-xs text-muted-foreground text-center">
@@ -2221,6 +3318,9 @@ export function AIAnalysis() {
   }
 
   // ─── Main UI ──────────────────────────────────────────────────
+
+  // Show guest exhausted banner mid-chat
+  const showGuestExhaustedBanner = guestMode && guestUsed && !isLoggedIn;
 
   return (
     <div className="flex flex-col gap-3 pb-2">
@@ -2234,7 +3334,7 @@ export function AIAnalysis() {
             AI Analysis
           </h2>
           <p className="text-[10px] text-muted-foreground">
-            Powered by Gemini 2.0
+            Powered by Pollinations AI
           </p>
         </div>
         <Badge variant="secondary" className="text-[10px] ml-auto font-mono">
@@ -2249,20 +3349,118 @@ export function AIAnalysis() {
         </Badge>
       </div>
 
-      {/* Strategy Box */}
-      <StrategyBox
-        onStrategySelect={handleStrategySelect}
-        isLoggedIn={isLoggedIn}
-      />
+      {/* AI Quick Tips */}
+      <AIQuickTips />
+
+      {/* Risk Calculator */}
+      <RiskCalculator />
+
+      {/* Strategy Box — hide for guest to simplify */}
+      {isLoggedIn && (
+        <StrategyBox
+          onStrategySelect={handleStrategySelect}
+          isLoggedIn={isLoggedIn}
+        />
+      )}
+      {!isLoggedIn && guestMode && (
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="px-4 pb-3 pt-3 flex flex-wrap gap-1.5">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wide w-full mb-0.5 font-semibold">
+              Quick picks
+            </span>
+            {QUICK_PICKS.map((name) => {
+              const s = BUILTIN_STRATEGIES.find((b) => b.name === name);
+              if (!s) return null;
+              const catColor = s ? STRATEGY_CATEGORY_COLORS[s.category] : "";
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() =>
+                    handleStrategySelect(name, false, s.description)
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] rounded-full text-xs font-semibold border transition-all active:scale-95 ${catColor || "text-primary border-primary/30 bg-primary/5 hover:bg-primary/15"} border-current/20 bg-current/5 hover:bg-current/10`}
+                >
+                  <Zap className="h-3 w-3" />
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Guest exhausted banner */}
+      {showGuestExhaustedBanner && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-primary/5 border border-primary/20 rounded-xl p-4 flex flex-col items-center gap-2 text-center"
+        >
+          <p className="text-sm font-semibold text-foreground">
+            Free analysis used
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Sign in to run unlimited analyses, save history, and access all
+            features.
+          </p>
+          <Button
+            onClick={login}
+            disabled={isLoggingIn}
+            size="sm"
+            className="rounded-full mt-1"
+            data-ocid="ai.signin_after_guest_button"
+          >
+            {isLoggingIn ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+            ) : (
+              <LogIn className="h-3.5 w-3.5 mr-1" />
+            )}
+            Sign In to Continue
+          </Button>
+        </motion.div>
+      )}
 
       {/* Chat area */}
       <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
-        {/* Messages */}
-        <ScrollArea className="flex-1 min-h-[320px] max-h-[480px]">
+        {/* Chat header bar with clear button */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border/50">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Chat
+          </span>
+          <button
+            type="button"
+            data-ocid="ai.chat_clear_button"
+            onClick={handleClearChat}
+            disabled={isAnalyzing || messages.length === 0}
+            className="h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-30"
+            aria-label="Clear chat"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* Messages — native scrollable with iOS momentum */}
+        <div
+          className="overflow-y-auto"
+          style={{
+            height: "min(55vh, 480px)",
+            WebkitOverflowScrolling: "touch",
+          }}
+          ref={(el) => {
+            // Assign messagesEndRef container for auto-scroll tracking
+            if (!el) return;
+            // We scroll the container itself to the bottom
+            (
+              el as HTMLDivElement & { _chatContainer?: boolean }
+            )._chatContainer = true;
+          }}
+          id="chat-scroll-container"
+        >
           <div className="p-4 space-y-4">
             {/* Empty state */}
             {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+              <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
                 <div className="h-14 w-14 rounded-2xl bg-muted/40 border border-border flex items-center justify-center">
                   <Sparkles className="h-7 w-7 text-muted-foreground/50" />
                 </div>
@@ -2277,13 +3475,33 @@ export function AIAnalysis() {
               </div>
             )}
 
+            {/* Market Overview quick pick — shown in greeting phase */}
+            {messages.length > 0 &&
+              phase === "greeting" &&
+              !isAnalyzing &&
+              isLoggedIn && (
+                <div className="flex justify-center pb-1">
+                  <button
+                    type="button"
+                    data-ocid="ai.market_overview_button"
+                    onClick={() => handleChipClick("__market_overview__")}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] rounded-full text-xs font-semibold border border-primary/30 bg-primary/5 text-primary hover:bg-primary/15 hover:border-primary/50 transition-all active:scale-95"
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                    Market Overview
+                  </button>
+                </div>
+              )}
+
             <AnimatePresence initial={false}>
               {messages.map((msg, idx) => (
                 <ChatBubble
                   key={msg.id}
                   message={msg}
                   onChipClick={
-                    phase !== "analyzing" ? handleChipClick : undefined
+                    phase !== "analyzing" && !showGuestExhaustedBanner
+                      ? handleChipClick
+                      : undefined
                   }
                   onImageAttach={
                     msg.isImageUploadPrompt && !msg.chipsUsed
@@ -2313,7 +3531,7 @@ export function AIAnalysis() {
 
             <div ref={messagesEndRef} />
           </div>
-        </ScrollArea>
+        </div>
 
         <Separator />
 

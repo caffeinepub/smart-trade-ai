@@ -8,12 +8,39 @@
 
 import { IDL } from '@icp-sdk/core/candid';
 
+export const Time = IDL.Int;
+export const TradeEntry = IDL.Record({
+  'id' : IDL.Text,
+  'pnl' : IDL.Text,
+  'direction' : IDL.Text,
+  'strategy' : IDL.Text,
+  'notes' : IDL.Text,
+  'timestamp' : Time,
+  'entryPrice' : IDL.Text,
+  'exitPrice' : IDL.Text,
+  'outcome' : IDL.Text,
+  'symbol' : IDL.Text,
+});
 export const UserRole = IDL.Variant({
   'admin' : IDL.Null,
   'user' : IDL.Null,
   'guest' : IDL.Null,
 });
-export const Time = IDL.Int;
+export const MarketPrice = IDL.Record({
+  'timestamp' : Time,
+  'price' : IDL.Text,
+  'changePercent' : IDL.Text,
+  'symbol' : IDL.Text,
+});
+export const PriceAlert = IDL.Record({
+  'id' : IDL.Text,
+  'userId' : IDL.Principal,
+  'targetPrice' : IDL.Text,
+  'timestamp' : Time,
+  'triggered' : IDL.Bool,
+  'symbol' : IDL.Text,
+  'condition' : IDL.Text,
+});
 export const CustomStrategy = IDL.Record({
   'id' : IDL.Text,
   'creator' : IDL.Principal,
@@ -49,11 +76,10 @@ export const CommunityStrategy = IDL.Record({
   'strategyType' : IDL.Text,
 });
 export const UserProfile = IDL.Record({ 'name' : IDL.Text });
-export const MarketPrice = IDL.Record({
-  'timestamp' : Time,
-  'price' : IDL.Text,
-  'changePercent' : IDL.Text,
-  'symbol' : IDL.Text,
+export const SystemStatus = IDL.Record({
+  'geminiKeyCount' : IDL.Nat,
+  'geminiModel' : IDL.Text,
+  'twelveDataKeyCount' : IDL.Nat,
 });
 export const AnalysisRequest = IDL.Record({
   'principal' : IDL.Principal,
@@ -89,12 +115,33 @@ export const TransformationOutput = IDL.Record({
 
 export const idlService = IDL.Service({
   '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
+  'addGeminiKey' : IDL.Func([IDL.Text], [], []),
   'addToWatchlist' : IDL.Func([IDL.Text], [], []),
+  'addTradeEntry' : IDL.Func(
+      [
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+        IDL.Text,
+      ],
+      [TradeEntry],
+      [],
+    ),
   'approveStrategy' : IDL.Func([IDL.Text], [], []),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+  'checkAndTriggerAlerts' : IDL.Func(
+      [IDL.Vec(MarketPrice)],
+      [IDL.Vec(PriceAlert)],
+      [],
+    ),
   'clearAnalysisHistory' : IDL.Func([], [], []),
   'deleteCustomStrategy' : IDL.Func([IDL.Text], [], []),
   'deleteStrategy' : IDL.Func([IDL.Text], [], []),
+  'deleteTradeEntry' : IDL.Func([IDL.Text], [], []),
   'generateCustomStrategy' : IDL.Func([IDL.Text], [CustomStrategy], []),
   'getAnalysisHistory' : IDL.Func([], [IDL.Vec(AnalysisResult)], ['query']),
   'getApprovedStrategies' : IDL.Func(
@@ -105,12 +152,16 @@ export const idlService = IDL.Service({
   'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
   'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
   'getCustomStrategies' : IDL.Func([], [IDL.Vec(CustomStrategy)], ['query']),
+  'getFavoriteStrategies' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
   'getMarketPrices' : IDL.Func([], [IDL.Vec(MarketPrice)], []),
   'getPendingStrategies' : IDL.Func(
       [],
       [IDL.Vec(CommunityStrategy)],
       ['query'],
     ),
+  'getPriceAlerts' : IDL.Func([], [IDL.Vec(PriceAlert)], ['query']),
+  'getSystemStatus' : IDL.Func([], [SystemStatus], ['query']),
+  'getTradeEntries' : IDL.Func([], [IDL.Vec(TradeEntry)], ['query']),
   'getUserProfile' : IDL.Func(
       [IDL.Principal],
       [IDL.Opt(UserProfile)],
@@ -120,6 +171,7 @@ export const idlService = IDL.Service({
   'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
   'rejectStrategy' : IDL.Func([IDL.Text], [], []),
   'removeFromWatchlist' : IDL.Func([IDL.Text], [], []),
+  'removePriceAlert' : IDL.Func([IDL.Text], [], []),
   'requestAIAnalysis' : IDL.Func([AnalysisRequest], [AnalysisResult], []),
   'requestAIAnalysisWithImage' : IDL.Func(
       [AnalysisWithImageRequest],
@@ -129,7 +181,9 @@ export const idlService = IDL.Service({
   'rotateGeminiKey' : IDL.Func([], [], []),
   'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
   'setAccessToken' : IDL.Func([IDL.Text, IDL.Text], [], []),
+  'setPriceAlert' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [PriceAlert], []),
   'submitStrategy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [], []),
+  'toggleFavoriteStrategy' : IDL.Func([IDL.Text], [], []),
   'transform' : IDL.Func(
       [TransformationInput],
       [TransformationOutput],
@@ -141,12 +195,39 @@ export const idlService = IDL.Service({
 export const idlInitArgs = [];
 
 export const idlFactory = ({ IDL }) => {
+  const Time = IDL.Int;
+  const TradeEntry = IDL.Record({
+    'id' : IDL.Text,
+    'pnl' : IDL.Text,
+    'direction' : IDL.Text,
+    'strategy' : IDL.Text,
+    'notes' : IDL.Text,
+    'timestamp' : Time,
+    'entryPrice' : IDL.Text,
+    'exitPrice' : IDL.Text,
+    'outcome' : IDL.Text,
+    'symbol' : IDL.Text,
+  });
   const UserRole = IDL.Variant({
     'admin' : IDL.Null,
     'user' : IDL.Null,
     'guest' : IDL.Null,
   });
-  const Time = IDL.Int;
+  const MarketPrice = IDL.Record({
+    'timestamp' : Time,
+    'price' : IDL.Text,
+    'changePercent' : IDL.Text,
+    'symbol' : IDL.Text,
+  });
+  const PriceAlert = IDL.Record({
+    'id' : IDL.Text,
+    'userId' : IDL.Principal,
+    'targetPrice' : IDL.Text,
+    'timestamp' : Time,
+    'triggered' : IDL.Bool,
+    'symbol' : IDL.Text,
+    'condition' : IDL.Text,
+  });
   const CustomStrategy = IDL.Record({
     'id' : IDL.Text,
     'creator' : IDL.Principal,
@@ -182,11 +263,10 @@ export const idlFactory = ({ IDL }) => {
     'strategyType' : IDL.Text,
   });
   const UserProfile = IDL.Record({ 'name' : IDL.Text });
-  const MarketPrice = IDL.Record({
-    'timestamp' : Time,
-    'price' : IDL.Text,
-    'changePercent' : IDL.Text,
-    'symbol' : IDL.Text,
+  const SystemStatus = IDL.Record({
+    'geminiKeyCount' : IDL.Nat,
+    'geminiModel' : IDL.Text,
+    'twelveDataKeyCount' : IDL.Nat,
   });
   const AnalysisRequest = IDL.Record({
     'principal' : IDL.Principal,
@@ -219,12 +299,33 @@ export const idlFactory = ({ IDL }) => {
   
   return IDL.Service({
     '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
+    'addGeminiKey' : IDL.Func([IDL.Text], [], []),
     'addToWatchlist' : IDL.Func([IDL.Text], [], []),
+    'addTradeEntry' : IDL.Func(
+        [
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+          IDL.Text,
+        ],
+        [TradeEntry],
+        [],
+      ),
     'approveStrategy' : IDL.Func([IDL.Text], [], []),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+    'checkAndTriggerAlerts' : IDL.Func(
+        [IDL.Vec(MarketPrice)],
+        [IDL.Vec(PriceAlert)],
+        [],
+      ),
     'clearAnalysisHistory' : IDL.Func([], [], []),
     'deleteCustomStrategy' : IDL.Func([IDL.Text], [], []),
     'deleteStrategy' : IDL.Func([IDL.Text], [], []),
+    'deleteTradeEntry' : IDL.Func([IDL.Text], [], []),
     'generateCustomStrategy' : IDL.Func([IDL.Text], [CustomStrategy], []),
     'getAnalysisHistory' : IDL.Func([], [IDL.Vec(AnalysisResult)], ['query']),
     'getApprovedStrategies' : IDL.Func(
@@ -235,12 +336,16 @@ export const idlFactory = ({ IDL }) => {
     'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
     'getCustomStrategies' : IDL.Func([], [IDL.Vec(CustomStrategy)], ['query']),
+    'getFavoriteStrategies' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
     'getMarketPrices' : IDL.Func([], [IDL.Vec(MarketPrice)], []),
     'getPendingStrategies' : IDL.Func(
         [],
         [IDL.Vec(CommunityStrategy)],
         ['query'],
       ),
+    'getPriceAlerts' : IDL.Func([], [IDL.Vec(PriceAlert)], ['query']),
+    'getSystemStatus' : IDL.Func([], [SystemStatus], ['query']),
+    'getTradeEntries' : IDL.Func([], [IDL.Vec(TradeEntry)], ['query']),
     'getUserProfile' : IDL.Func(
         [IDL.Principal],
         [IDL.Opt(UserProfile)],
@@ -250,6 +355,7 @@ export const idlFactory = ({ IDL }) => {
     'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
     'rejectStrategy' : IDL.Func([IDL.Text], [], []),
     'removeFromWatchlist' : IDL.Func([IDL.Text], [], []),
+    'removePriceAlert' : IDL.Func([IDL.Text], [], []),
     'requestAIAnalysis' : IDL.Func([AnalysisRequest], [AnalysisResult], []),
     'requestAIAnalysisWithImage' : IDL.Func(
         [AnalysisWithImageRequest],
@@ -259,7 +365,13 @@ export const idlFactory = ({ IDL }) => {
     'rotateGeminiKey' : IDL.Func([], [], []),
     'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
     'setAccessToken' : IDL.Func([IDL.Text, IDL.Text], [], []),
+    'setPriceAlert' : IDL.Func(
+        [IDL.Text, IDL.Text, IDL.Text],
+        [PriceAlert],
+        [],
+      ),
     'submitStrategy' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [], []),
+    'toggleFavoriteStrategy' : IDL.Func([IDL.Text], [], []),
     'transform' : IDL.Func(
         [TransformationInput],
         [TransformationOutput],
